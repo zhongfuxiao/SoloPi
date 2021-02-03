@@ -113,10 +113,10 @@ public class PerformanceActionProvider implements ActionProvider {
                         File folder = RecordUtil.saveToFile(records);
 
                         // 显示提示框
-                        LauncherApplication.getInstance().showToast("录制数据已经保存到\"" + folder.getPath() + "\"下");
+                        LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.performance__record_save, folder.getPath()));
                     } else {
                         String response = RecordUtil.uploadData(uploadUrl, records);
-                        LauncherApplication.getInstance().showToast("录制数据已经上传至\"" + uploadUrl + "\"，响应结果: " + response);
+                        LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.performance__record_upload, uploadUrl, response));
                     }
                 }
             });
@@ -135,9 +135,9 @@ public class PerformanceActionProvider implements ActionProvider {
 
         // 配置功能项
         if (isRecording) {
-            actionMap.put(ACTION_STOP_RECORD, "停止性能录制");
+            actionMap.put(ACTION_STOP_RECORD, StringUtil.getString(R.string.performance__stop_record));
         } else {
-            actionMap.put(ACTION_START_RECORD, "开始性能录制");
+            actionMap.put(ACTION_START_RECORD, StringUtil.getString(R.string.performance__start_record));
         }
 
         return actionMap;

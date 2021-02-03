@@ -15,10 +15,13 @@
  */
 package com.alipay.hulu.shared.node.utils;
 
+import android.content.Context;
 import android.graphics.Rect;
+import android.util.DisplayMetrics;
+import android.view.WindowManager;
 
+import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.tools.CmdTools;
-import com.alipay.hulu.common.utils.DeviceInfoUtil;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.MiscUtil;
 import com.alipay.hulu.common.utils.StringUtil;
@@ -58,6 +61,8 @@ public class OperationUtil {
         map.put("允许", 1);
         map.put("始终允许", 1);
         map.put("总是允许", 1);
+        map.put("仅在使用中允许", 1);
+        map.put("仅在使用该应用时允许", 1);
         map.put("安装", 1);
         map.put("重新安装", 1);
         map.put("继续安装", 1);
@@ -84,6 +89,7 @@ public class OperationUtil {
         map.put("我知道啦", 4);
         map.put("立即删除", 5);
         map.put("清除", 5);
+        map.put("跳过", 5);
         map.put("立即清理", 6);
         map.put("忽略风险", 7);
         alertContentMap = Collections.unmodifiableMap(map);
@@ -132,8 +138,13 @@ public class OperationUtil {
             AbstractNodeTree operationNode;
             int pos = 0;
 
+            DisplayMetrics dm = new DisplayMetrics();
+            ((WindowManager) LauncherApplication.getInstance().getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(dm);
+            int height = dm.heightPixels;
+            int width = dm.widthPixels;
             int scrollCount = 0;
             do {
+                service.invalidRoot();
                 AbstractNodeTree tmpRoot = service.getCurrentRoot();
                 operationNode = OperationNodeLocator.findAbstractNode(tmpRoot, node);
 
@@ -147,20 +158,20 @@ public class OperationUtil {
                 if (!(operationNode instanceof CaptureTree)) {
                     // 判断下是否在屏幕内
                     Rect bound = operationNode.getNodeBound();
-                    LogUtil.d(TAG, "控件空间属性：%s, 屏幕属性：%s",  bound, DeviceInfoUtil.curScreenSize);
-                    if (bound.top <= 0 && bound.bottom <= 0) {
+                    LogUtil.d(TAG, "控件空间属性：%s, 屏幕属性：%s",  bound, dm);
+                    if (bound.bottom <= 5) {
                         service.doSomeAction(new OperationMethod(PerformActionEnum.GLOBAL_SCROLL_TO_BOTTOM), null);
                         MiscUtil.sleep(2500);
                         scrollCount ++;
-                    } else if (bound.top >= DeviceInfoUtil.curScreenSize.y) {
+                    } else if (bound.top >= height - 5) {
                         service.doSomeAction(new OperationMethod(PerformActionEnum.GLOBAL_SCROLL_TO_TOP), null);
                         MiscUtil.sleep(2500);
                         scrollCount ++;
-                    } else if (bound.centerX() <= 0) {
+                    } else if (bound.centerX() <= 5) {
                         service.doSomeAction(new OperationMethod(PerformActionEnum.GLOBAL_SCROLL_TO_RIGHT), null);
                         MiscUtil.sleep(2500);
                         scrollCount ++;
-                    } else if (bound.centerX() >= DeviceInfoUtil.curScreenSize.x) {
+                    } else if (bound.centerX() >= width - 5) {
                         service.doSomeAction(new OperationMethod(PerformActionEnum.GLOBAL_SCROLL_TO_LEFT), null);
                         MiscUtil.sleep(2500);
                         scrollCount ++;
@@ -219,9 +230,10 @@ public class OperationUtil {
 
         AbstractNodeTree tmpRoot = null;
         try {
+            service.invalidRoot();
             tmpRoot = service.getCurrentRoot();
         } catch (Exception e) {
-            LogUtil.e(TAG, "Catch Exception: " + e.getMessage(), e);
+            e.printStackTrace();
         }
 
         // 拿不到root

@@ -16,12 +16,11 @@
 package com.alipay.hulu.activity;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.PointF;
+import android.net.Uri;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
-import android.support.design.widget.Snackbar;
-import android.support.v4.app.ActivityCompat;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -31,12 +30,18 @@ import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.injector.InjectorService;
 import com.alipay.hulu.common.injector.provider.Param;
 import com.alipay.hulu.common.injector.provider.Provider;
+import com.alipay.hulu.common.scheme.SchemeActivity;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.StringUtil;
 import com.alipay.hulu.event.HandlePermissionEvent;
 import com.alipay.hulu.event.ScanSuccessEvent;
-import com.dlazaro66.qrcodereaderview.QRCodeReaderView;
-import com.dlazaro66.qrcodereaderview.QRCodeReaderView.OnQRCodeReadListener;
+import com.alipay.hulu.shared.scan.ScanCodeType;
+import com.alipay.hulu.ui.AnyCodeReaderView;
+import com.google.android.material.snackbar.Snackbar;
+import com.google.zxing.BarcodeFormat;
+
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
 
 
 /**
@@ -45,7 +50,7 @@ import com.dlazaro66.qrcodereaderview.QRCodeReaderView.OnQRCodeReadListener;
 @Provider({@Param(type = ScanSuccessEvent.class, sticky = false),
         @Param(type = HandlePermissionEvent.class, sticky = false)})
 public class QRScanActivity extends BaseActivity
-        implements ActivityCompat.OnRequestPermissionsResultCallback, OnQRCodeReadListener {
+        implements ActivityCompat.OnRequestPermissionsResultCallback, AnyCodeReaderView.OnCodeReadListener {
     private static final String TAG = "QRScanActivity";
 
     public static final String KEY_SCAN_TYPE = "KEY_SCAN_TYPE";
@@ -55,7 +60,8 @@ public class QRScanActivity extends BaseActivity
     private ViewGroup mainLayout;
 
     private TextView resultTextView;
-    private QRCodeReaderView qrCodeReaderView;
+    private TextView resultTypeText;
+    private AnyCodeReaderView anyCodeReaderView;
     private volatile boolean isQRCodeReadListenerEnabled = false;
 
     private InjectorService injectorService;
@@ -95,18 +101,18 @@ public class QRScanActivity extends BaseActivity
     }
 
     private void enableQRCodeReadListener() {
-        if (qrCodeReaderView != null) {
+        if (anyCodeReaderView != null) {
             isQRCodeReadListenerEnabled = true;
-            qrCodeReaderView.startCamera();
-            qrCodeReaderView.setOnQRCodeReadListener(this);
+            anyCodeReaderView.startCamera();
+            anyCodeReaderView.setOnCodeReadListener(this);
         }
     }
 
     private void disableQRCodeReadListener() {
-        if (qrCodeReaderView != null) {
+        if (anyCodeReaderView != null) {
             isQRCodeReadListenerEnabled = false;
-            qrCodeReaderView.stopCamera();
-            qrCodeReaderView.setOnQRCodeReadListener(null);
+            anyCodeReaderView.stopCamera();
+            anyCodeReaderView.setOnCodeReadListener(null);
         }
     }
 
@@ -133,29 +139,64 @@ public class QRScanActivity extends BaseActivity
     }
 
     @Override
-    public void onQRCodeRead(String text, PointF[] points) {
+    public void onCodeRead(BarcodeFormat format, String text, PointF[] points) {
         LogUtil.d(TAG, "OnQrCodeRead");
         if (!isQRCodeReadListenerEnabled) {
             return;
         }
 
         resultTextView.setText(text);
+        resultTypeText.setText(format.toString());
+
+        // 过滤不可用的类型
+        ScanCodeType acceptType = ScanCodeType.getByFormat(format);
+        if (acceptType == null) {
+            LogUtil.w(TAG, "Can't process code of type::" + format);
+            enableQRCodeReadListener();
+            return;
+        }
 
         disableQRCodeReadListener();
 
         if (StringUtil.isEmpty(text)) {
+            enableQRCodeReadListener();
             return;
         }
 
         long curTime = System.currentTimeMillis();
         if (curTime - lastReadTime < 2000) {
+            enableQRCodeReadListener();
             return;
         }
 
         lastReadTime = curTime;
 
-        if (curScanType == ScanSuccessEvent.SCAN_TYPE_SCHEME) {
-            notifyScanSuccess(text);
+        if (curScanType == ScanSuccessEvent.SCAN_TYPE_SCHEME
+                || curScanType == ScanSuccessEvent.SCAN_TYPE_QR_CODE
+                || curScanType == ScanSuccessEvent.SCAN_TYPE_BAR_CODE) {
+            notifyScanSuccess(text, acceptType);
+        } else if (curScanType == ScanSuccessEvent.SCAN_TYPE_PARAM) {
+            if (StringUtil.startWith(text, "http://") || StringUtil.startWith(text, "https://")) {
+                notifyScanSuccess(text, acceptType);
+            } else {
+                resultTextView.setText(getString(R.string.qr_scan__url_not_support, text));
+                enableQRCodeReadListener();
+            }
+        } else {
+            resultTextView.setText(text);
+            if (StringUtil.startWith(text, "http")) {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setData(Uri.parse(text));
+                startActivity(intent);
+                finish();
+            } else if (StringUtil.startWith(text, "solopi://")) {
+                Intent intent = new Intent(this, SchemeActivity.class);
+                intent.setData(Uri.parse(text));
+                startActivity(intent);
+                finish();
+            } else {
+                enableQRCodeReadListener();
+            }
         }
     }
 
@@ -169,12 +210,11 @@ public class QRScanActivity extends BaseActivity
 
     /**
      * 发送成功消息
-     *
-     * @param content
      */
-    public void notifyScanSuccess(String content) {
+    public void notifyScanSuccess(String text, ScanCodeType codeType) {
         ScanSuccessEvent event = new ScanSuccessEvent();
-        event.setContent(content);
+        event.setContent(text);
+        event.setCodeType(codeType);
         event.setType(curScanType);
         injectorService.pushMessage(null, event);
         finish();
@@ -182,8 +222,8 @@ public class QRScanActivity extends BaseActivity
 
     private void requestCameraPermission() {
         if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
-            Snackbar.make(mainLayout, "Soloπ需要权限来展示相机预览",
-                    Snackbar.LENGTH_INDEFINITE).setAction("好的", new View.OnClickListener() {
+            Snackbar.make(mainLayout, R.string.qr__camera_permission,
+                    Snackbar.LENGTH_INDEFINITE).setAction(R.string.constant__yes, new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
                     ActivityCompat.requestPermissions(QRScanActivity.this, new String[]{
@@ -192,7 +232,7 @@ public class QRScanActivity extends BaseActivity
                 }
             }).show();
         } else {
-            Snackbar.make(mainLayout, "未获得权限，正在申请相机权限",
+            Snackbar.make(mainLayout, R.string.qr__requst_permission,
                     Snackbar.LENGTH_SHORT).show();
             ActivityCompat.requestPermissions(this, new String[]{
                     Manifest.permission.CAMERA
@@ -203,13 +243,14 @@ public class QRScanActivity extends BaseActivity
     private void initQRCodeReaderView() {
         View content = getLayoutInflater().inflate(R.layout.content_decoder, mainLayout, true);
 
-        qrCodeReaderView = (QRCodeReaderView) content.findViewById(R.id.qrdecoderview);
+        anyCodeReaderView = content.findViewById(R.id.anydecoderview);
         resultTextView = (TextView) content.findViewById(R.id.result_text_view);
+        resultTypeText = content.findViewById(R.id.result_type_text);
 
-        qrCodeReaderView.setAutofocusInterval(2000L);
-        qrCodeReaderView.setOnQRCodeReadListener(this);
-        qrCodeReaderView.setBackCamera();
-        qrCodeReaderView.startCamera();
+        anyCodeReaderView.setAutofocusInterval(2000L);
+        anyCodeReaderView.setOnCodeReadListener(this);
+        anyCodeReaderView.setBackCamera();
+        anyCodeReaderView.startCamera();
 
         enableQRCodeReadListener();
     }

@@ -15,7 +15,7 @@
  */
 package com.alipay.hulu.replay;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.alipay.hulu.bean.ReplayResultBean;
 import com.alipay.hulu.bean.ReplayStepInfoBean;
@@ -98,8 +98,8 @@ public class RepeatStepProvider extends AbstractStepProvider {
     }
 
     @Override
-    public boolean reportErrorStep(OperationStep step, String reason) {
-        boolean errorResult = currentStepProvider.reportErrorStep(step, reason);
+    public boolean reportErrorStep(OperationStep step, String reason, List<String> stack) {
+        boolean errorResult = currentStepProvider.reportErrorStep(step, reason, stack);
 
         // 如果是关键性错误
         if (errorResult) {

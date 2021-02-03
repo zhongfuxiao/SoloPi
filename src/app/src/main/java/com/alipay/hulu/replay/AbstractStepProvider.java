@@ -17,9 +17,8 @@ package com.alipay.hulu.replay;
 
 import android.content.Context;
 import android.content.DialogInterface;
-import android.support.v7.app.AlertDialog;
+import androidx.appcompat.app.AlertDialog;
 import android.view.View;
-import android.view.WindowManager;
 
 import com.alipay.hulu.R;
 import com.alipay.hulu.bean.ReplayResultBean;
@@ -72,7 +71,7 @@ public abstract class AbstractStepProvider {
      * @param reason 故障原因
      * @return 是否是故障
      */
-    public abstract boolean reportErrorStep(OperationStep step, String reason);
+    public abstract boolean reportErrorStep(OperationStep step, String reason, List<String> callStack);
 
     /**
      * 获取回放结果
@@ -121,7 +120,7 @@ public abstract class AbstractStepProvider {
         try {
             AlertDialog dialog = new AlertDialog.Builder(context, R.style.SimpleDialogTheme)
                     .setMessage(message)
-                    .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                    .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             if (confirmAction != null) {
@@ -130,7 +129,7 @@ public abstract class AbstractStepProvider {
                             dialog.dismiss();
                         }
                     })
-                    .setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                    .setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             if (cancelAction != null) {
@@ -144,7 +143,7 @@ public abstract class AbstractStepProvider {
                             dialog.dismiss();
                         }
                     }).create();
-            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+            dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
             dialog.setCanceledOnTouchOutside(false);
             dialog.show();
         } catch (Exception e) {

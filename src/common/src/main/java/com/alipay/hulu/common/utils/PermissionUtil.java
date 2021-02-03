@@ -23,11 +23,11 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.provider.Settings;
-import android.support.annotation.NonNull;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
-import android.widget.Toast;
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
+import com.alipay.hulu.common.R;
 import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.tools.BackgroundExecutor;
 import com.alipay.hulu.common.tools.CmdTools;
@@ -116,14 +116,20 @@ public class PermissionUtil {
      * @param result
      * @param reason
      */
-    public static void onPermissionResult(int idx, boolean result, String reason) {
+    public static void onPermissionResult(int idx, final boolean result, final String reason) {
         if (_callbackMap.isEmpty() || _callbackMap.get(idx) == null) {
             LogUtil.e(TAG, "callback引用消失");
             return;
         }
 
-        OnPermissionCallback _callback = _callbackMap.remove(idx);
-        _callback.onPermissionResult(result, reason);
+        final OnPermissionCallback _callback = _callbackMap.remove(idx);
+        LauncherApplication.getInstance().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                _callback.onPermissionResult(result, reason);
+
+            }
+        }, 10);
     }
 
     /**
@@ -184,8 +190,7 @@ public class PermissionUtil {
                     CmdTools.generateConnection();
                 }
             });
-            Toast.makeText(context, "非Root设备需要开启ADB 5555端口并授权调试才可使用" +
-                    "\n请在命令行执行 adb tcpip 5555", Toast.LENGTH_LONG).show();
+            LauncherApplication.toast(R.string.open_adb_permission_failed);
             return false;
         }
         return true;

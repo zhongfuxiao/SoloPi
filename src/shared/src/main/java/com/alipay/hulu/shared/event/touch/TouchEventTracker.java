@@ -15,12 +15,14 @@
  */
 package com.alipay.hulu.shared.event.touch;
 
+
 import android.graphics.Point;
 
 import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.injector.InjectorService;
 import com.alipay.hulu.common.injector.param.Subscriber;
 import com.alipay.hulu.common.injector.provider.Param;
+import com.alipay.hulu.common.service.SPService;
 import com.alipay.hulu.common.tools.BackgroundExecutor;
 import com.alipay.hulu.common.tools.CmdLine;
 import com.alipay.hulu.common.tools.CmdTools;
@@ -175,7 +177,7 @@ public class TouchEventTracker {
     /**
      * 读取event的Runnable
      */
-    private static class StreamReadRunnable implements Runnable {
+    static class StreamReadRunnable implements Runnable {
         private WeakReference<TouchEventTracker> handlerRef;
         private CmdLine cmdLine;
         private boolean[] waitForXY = {false, false};
@@ -186,6 +188,8 @@ public class TouchEventTracker {
 
         private Point screenSize;
         private long deviceStartTime = 0L;
+        private int defaultScreenRotation = 0;
+        private boolean changeRotation = false;
 
         /**
          * 默认竖屏
@@ -204,6 +208,10 @@ public class TouchEventTracker {
             cmdLine.writeCommand("getevent -lt " + "\n");
 
             InjectorService.g().register(this);
+
+            defaultScreenRotation = SPService.getInt(SPService.KEY_SCREEN_FACTOR_ROTATION, 0);
+            changeRotation = SPService.getBoolean(SPService.KEY_SCREEN_ROTATION, false);
+            currentOrientation = (ROTATION_0 + defaultScreenRotation) % 4;
         }
 
         /**
@@ -224,7 +232,7 @@ public class TouchEventTracker {
 
         @Subscriber(@Param(LauncherApplication.SCREEN_ORIENTATION))
         public void setScreenOrientation(int orientation) {
-            this.currentOrientation = orientation;
+            this.currentOrientation = (orientation + defaultScreenRotation) % 4;
 
             LogUtil.d(TAG, "更新屏幕旋转方向为： " + orientation);
         }
@@ -248,14 +256,15 @@ public class TouchEventTracker {
             // 获取各个设备的分辨率
             Map<String, Point> deviceContent = calculateDeviceSize();
 
-            LogUtil.i(TAG, "Device resolution:" + deviceContent);
+            LogUtil.w("lezhou", "device resolution:" + deviceContent);
 
             if (deviceContent.size() > 0) {
                 int screenWidth = -1;
                 int screenHeight = -1;
 
                 // 计算当前屏幕的分辨率
-                String result = CmdTools.execAdbCmd("wm size", 3000);
+                String result = CmdTools.execHighPrivilegeCmd("wm size", 3000);
+                LogUtil.d("hahaha", result);
 
                 String[] lines = result.split("\\n");
                 String info = null;
@@ -286,10 +295,8 @@ public class TouchEventTracker {
                     }
                 }
 
-                LogUtil.d(TAG, "sw:" + screenWidth);
-                LogUtil.d(TAG, "sh:" + screenHeight);
-
-                screenSize = new Point(screenWidth, screenHeight);
+                LogUtil.w("lezhou", "sw:" + screenWidth);
+                LogUtil.w("lezhou", "sh:" + screenHeight);
 
                 screenSize = new Point(screenWidth, screenHeight);
 
@@ -302,7 +309,7 @@ public class TouchEventTracker {
                         Point deviceWH = deviceContent.get(key);
                         float[] factors = {screenWidth * 1.0f / deviceWH.x,
                                 screenHeight * 1.0f / deviceWH.y};
-                        LogUtil.d(TAG, String.format("load factor for device: %s is (%.2f, %.2f)", key, factors[0], factors[1]));
+                        LogUtil.i(TAG, String.format("load factor for device: %s is (%.2f, %.2f)", key, factors[0], factors[1]));
                         devicesFactors.put(key, factors);
                     }
                 }
@@ -314,7 +321,7 @@ public class TouchEventTracker {
          * @return
          */
         private Map<String, Point> calculateDeviceSize() {
-            String result = CmdTools.execAdbCmd("getevent -p", 2000);
+            String result = CmdTools.execHighPrivilegeCmd("getevent -p", 2000);
             LogUtil.d(TAG, "getevent -p: " + result);
             String[] lines = result.split("\\n");
 
@@ -368,7 +375,7 @@ public class TouchEventTracker {
                         currentDevice = device[1].trim();
                         continue;
 
-                    // 配置文件前部信息
+                        // 配置文件前部信息
                     } else if (StringUtil.contains(line, "events:")) {
                         if (currentState != 1) {
                             continue;
@@ -428,7 +435,7 @@ public class TouchEventTracker {
                     devices.put(currentDevice, currentWH);
                 }
             } catch (NumberFormatException e) {
-                LogUtil.e(TAG, "NumberFormatException: " + e.getMessage(), e);
+                LogUtil.e(TAG, e.toString());
             }
             return devices;
         }
@@ -454,133 +461,170 @@ public class TouchEventTracker {
                 return;
             }
 
+            // 预检查
+            if (!envCheck()) {
+                tracker.touchCmdExecutor.schedule(this, 10, TimeUnit.SECONDS);
+                return;
+            }
+
+            // 解析当前触摸事件
+            String content;
+            CmdLine.CmdLineReader reader = cmdLine.getReader();
+            while ((content = reader.readLine()) != null) {
+                parseSingleLine(content, tracker);
+            }
+        }
+
+        /**
+         * 运行环境检查
+         * @return
+         */
+        private boolean envCheck() {
+            long startTime = System.currentTimeMillis();
+            int count = 0;
+
+            // 尝试恢复三次
+            while ((cmdLine == null || cmdLine.isClosed()) && count < 3) {
+                try {
+                    LogUtil.w(TAG, "ADB无法连接");
+
+                    // 尝试恢复Stream
+                    cmdLine = CmdTools.openCmdLine();
+                    if (cmdLine != null) {
+                        cmdLine.writeCommand("getevent -lt" + "\n");
+                    }
+                } catch (Exception e) {
+                    LogUtil.e(TAG, "初始化流抛出异常", e);
+                }
+
+                count ++;
+            }
+
+            // adb完全挂了，stream无法恢复，等10s，看看SoloPi的15s的adb保活是否有用
+            if (cmdLine == null || cmdLine.isClosed()) {
+                LogUtil.e(TAG, "Stream can't recover from dead");
+                return false;
+            }
+            return true;
+        }
+
+        /**
+         * 解析getEvent
+         * @param result
+         * @param tracker
+         */
+        private void doContentParse(String result, TouchEventTracker tracker) {
             // 每500ms读一次消息
             try {
-                long startTime = System.currentTimeMillis();
-                int count = 0;
-
-                // 尝试恢复三次
-                while ((cmdLine == null || cmdLine.isClosed()) && count < 3) {
-                    try {
-                        LogUtil.w(TAG, "CmdLine连接中断");
-
-                        // 尝试恢复Stream
-                        cmdLine = CmdTools.openCmdLine();
-                        if (cmdLine != null) {
-                            cmdLine.writeCommand("getevent -lt" + "\n");
-                        }
-                    } catch (Exception e) {
-                        LogUtil.e(TAG, "初始化CmdLine抛出异常", e);
-                    }
-
-                    count ++;
-                }
-
-                // adb完全挂了，stream无法恢复，等10s，看看Soloπ的15s的adb保活是否有用
-                if (cmdLine == null || cmdLine.isClosed()) {
-                    LogUtil.e(TAG, "Stream can't recover from dead");
-                    tracker.touchCmdExecutor.schedule(this, 10, TimeUnit.SECONDS);
-                    return;
-                }
-
                 // 只有在stream还能存在的情况才会进行读取
-                tracker.touchCmdExecutor.schedule(this, 300, TimeUnit.MILLISECONDS);
-
-                String result = cmdLine.readOutput();
                 String[] lines = result.split("\n");
 
+
                 for (String line : lines) {
-                    if (line.contains("ABS_MT_TRACKING_ID")) {
-                        // 抬起事件
-                        if (line.contains("ffffff")) {
-                            // 防止重复触发事件
-                            long upTime = getEventMicroSecond(line);
-                            // 防止重复触发事件
-                            if (upTime - lastUpActionTime < WAIT_TOUCH_FILTER) {
-                                continue;
-                            }
-
-                            lastUpActionTime = upTime;
-                            LogUtil.d(TAG, "Line tracking id off: " + line);
-
-                            tracker.receiveTouchUp(upTime);
-                        } else {
-                            // 根据DOWN消息来确定是否有点击
-                            // 出现DOWN消息后找ABS_MS_POSITION_X 和 ABS_MT_POSITION_Y来获取点击位置
-                            // OnePlus A3010点击是BTN_TOOL_FINGER...
-                            long downTime = getEventMicroSecond(line);
-                            // 防止重复触发事件
-                            if (downTime - lastDownActionTime < WAIT_TOUCH_FILTER) {
-                                continue;
-                            }
-
-                            lastDownActionTime = downTime;
-
-                            if (xFactor == 0f || yFactor == 0f) {
-                                reloadFactor(line);
-                            }
-                            LogUtil.d(TAG, "Line tracking id on: " + line);
-
-                            waitForXY = new boolean[]{true, true};
-                            tracker.receiveTouchDown(downTime);
-                        }
-                    } else if (line.contains("BTN_TOUCH")) {
-                        if (line.contains("UP")) {
-                            // 防止重复触发事件
-                            long upTime = getEventMicroSecond(line);
-                            // 防止重复触发事件
-                            if (upTime - lastUpActionTime < WAIT_TOUCH_FILTER) {
-                                continue;
-                            }
-
-                            lastUpActionTime = upTime;
-                            LogUtil.d(TAG, "Line up: " + line);
-
-                            tracker.receiveTouchUp(upTime);
-                        } else if (line.contains("DOWN")) {
-                            long downTime = getEventMicroSecond(line);
-                            // 防止重复触发事件
-                            if (downTime - lastDownActionTime < WAIT_TOUCH_FILTER) {
-                                continue;
-                            }
-
-                            lastDownActionTime = downTime;
-
-                            if (xFactor == 0f || yFactor == 0f) {
-                                reloadFactor(line);
-                            }
-                            LogUtil.d(TAG, "Line down: " + line);
-                            waitForXY = new boolean[]{true, true};
-                            tracker.receiveTouchDown(downTime);
-                        }
-                    } else if (waitForXY[0] && line.contains("ABS_MT_POSITION_X")) {
-                        LogUtil.d(TAG, line);
-                        String[] splited = line.split("ABS_MT_POSITION_X");
-                        String x = splited[splited.length - 1].trim();
-                        xy[0] = (int) (Integer.parseInt(x, 16) * xFactor);
-                        waitForXY[0] = false;
-
-                        LogUtil.i(TAG, "xfactor: %f,x: %d", xFactor, xy[0]);
-
-                        // 如果xy都找到了，发送消息
-                        sendIfPossible(line);
-                    } else if (waitForXY[1] && line.contains("ABS_MT_POSITION_Y")) {
-                        LogUtil.d(TAG, line);
-                        String[] splited = line.split("ABS_MT_POSITION_Y");
-                        String y = splited[splited.length - 1].trim();
-                        xy[1] = (int) (Integer.parseInt(y, 16) * yFactor);
-                        waitForXY[1] = false;
-
-                        LogUtil.i(TAG, "yfactor: %f,y: %d", yFactor, xy[1]);
-
-                        // 如果xy都找到了，发送消息
-                        sendIfPossible(line);
-                    }
+                    parseSingleLine(line, tracker);
                 }
-
-                LogUtil.d(TAG, "Touch Manager Cost time " + (System.currentTimeMillis() - startTime));
+                //LogUtil.i(TAG, "Touch Manager Cost time " + (System.currentTimeMillis() - startTime));
             } catch (Throwable t) {
                 LogUtil.e(TAG, "监听抛出异常，需要检查", t);
+            }
+        }
+
+        /**
+         * 解析单行数据
+         * @param line
+         * @param tracker
+         */
+        private void parseSingleLine(String line, TouchEventTracker tracker) {
+            try {
+                if (line.contains("ABS_MT_TRACKING_ID")) {
+                    // 抬起事件
+                    if (line.contains("ffffff")) {
+                        // 防止重复触发事件
+                        long upTime = getEventMicroSecond(line);
+                        // 防止重复触发事件
+                        if (upTime - lastUpActionTime < WAIT_TOUCH_FILTER) {
+                            return;
+                        }
+
+                        lastUpActionTime = upTime;
+
+                        LogUtil.w(TAG, "Tracking line: " + line);
+                        tracker.receiveTouchUp(upTime);
+                    } else {
+                        // 根据DOWN消息来确定是否有点击
+                        // 出现DOWN消息后找ABS_MS_POSITION_X 和 ABS_MT_POSITION_Y来获取点击位置
+                        // OnePlus A3010点击是BTN_TOOL_FINGER...
+                        long downTime = getEventMicroSecond(line);
+                        // 防止重复触发事件
+                        if (downTime - lastDownActionTime < WAIT_TOUCH_FILTER) {
+                            return;
+                        }
+
+                        lastDownActionTime = downTime;
+
+                        if (xFactor == 0f || yFactor == 0f) {
+                            reloadFactor(line);
+                        }
+                        LogUtil.i(TAG, line);
+                        waitForXY = new boolean[]{true, true};
+                        tracker.receiveTouchDown(downTime);
+                    }
+                } else if (line.contains("BTN_TOUCH")) {
+                    if (line.contains("UP")) {
+                        // 防止重复触发事件
+                        long upTime = getEventMicroSecond(line);
+                        // 防止重复触发事件
+                        if (upTime - lastUpActionTime < WAIT_TOUCH_FILTER) {
+                            return;
+                        }
+
+                        lastUpActionTime = upTime;
+
+                        LogUtil.w(TAG, "Tracking line: " + line);
+                        tracker.receiveTouchUp(upTime);
+                    } else if (line.contains("DOWN")) {
+                        long downTime = getEventMicroSecond(line);
+                        // 防止重复触发事件
+                        if (downTime - lastDownActionTime < WAIT_TOUCH_FILTER) {
+                            return;
+                        }
+
+                        lastDownActionTime = downTime;
+
+                        if (xFactor == 0f || yFactor == 0f) {
+                            reloadFactor(line);
+                        }
+                        LogUtil.i(TAG, line);
+                        waitForXY = new boolean[]{true, true};
+                        tracker.receiveTouchDown(downTime);
+                    }
+                } else if (waitForXY[0] && line.contains("ABS_MT_POSITION_X")) {
+                    LogUtil.i(TAG, line);
+                    String[] splited = line.split("ABS_MT_POSITION_X");
+                    String x = splited[splited.length - 1].trim();
+                    xy[0] = (int) (Integer.parseInt(x, 16) * xFactor);
+                    waitForXY[0] = false;
+
+                    LogUtil.w("lezhou", "xfactor:" + xFactor);
+
+                    LogUtil.w("lezhou", "x: " + (xy[0]));
+
+                    // 如果xy都找到了，发送消息
+                    sendIfPossible(line);
+                } else if (waitForXY[1] && line.contains("ABS_MT_POSITION_Y")) {
+                    LogUtil.i(TAG, line);
+                    String[] splited = line.split("ABS_MT_POSITION_Y");
+                    String y = splited[splited.length - 1].trim();
+                    xy[1] = (int) (Integer.parseInt(y, 16) * yFactor);
+                    waitForXY[1] = false;
+
+                    LogUtil.w("lezhou", "y: " + xy[1]);
+
+                    // 如果xy都找到了，发送消息
+                    sendIfPossible(line);
+                }
+            } catch (Throwable t) {
+                LogUtil.e(TAG, "Fail to parse line " + line, t);
             }
         }
 
@@ -592,7 +636,7 @@ public class TouchEventTracker {
         private long getEventMicroSecond(String line) {
             // 来自 https://source.android.com/devices/input/getevent
             // 注意：getevent 时间戳采用 CLOCK_MONOTONIC 时基，并使用 $SECONDS.$MICROSECONDS 格式。有关详情，请参阅 getevent.c。
-            LogUtil.d(TAG, "Event Line: %s", line);
+            LogUtil.i(TAG, "Event Line: %s", line);
             String content = line.split("]")[0].trim();
 
             // 魅族比较特殊
@@ -620,7 +664,7 @@ public class TouchEventTracker {
 
             // 根据device查找目标分辨率
             String[] splitted = StringUtil.split(line, ":");
-            LogUtil.d(TAG, "Factor: " + line);
+            LogUtil.e(TAG, "Factor: " + line);
             if (splitted.length > 1) {
                 String device = splitted[0];
                 if (StringUtil.contains(device, "]")) {
@@ -670,6 +714,12 @@ public class TouchEventTracker {
                     p = new Point(xy[1], screenSize.x - xy[0]);
                 }
 
+                if (changeRotation) {
+                    float divide = screenSize.x / (float) screenSize.y;
+                    p.x = (int) (p.x * divide);
+                    p.y = (int) (p.y / divide);
+                }
+
                 // 获取毫秒级时间
                 long eventTime = getEventMicroSecond(line);
                 handlerRef.get().receiveNewTouch(eventTime, p);
@@ -691,3 +741,4 @@ public class TouchEventTracker {
         void notifyTouchEnd(long microSecond);
     }
 }
+

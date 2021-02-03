@@ -16,10 +16,16 @@
             "name": "hulu_screenRecord"
         },
         {
-            "url": "https://raw.githubusercontent.com/alipay/SoloPi/master/plugins/hulu_minicap.v8a.zip",
-            "version": 3,
+            "url": "https://raw.githubusercontent.com/alipay/SoloPi/master/plugins/hulu_minicap_6.zip",
+            "version": 6,
             "type": "base",
             "name": "minicap"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/alipay/SoloPi/master/plugins/scrcpytouch.zip",
+            "version": 2,
+            "type": "base",
+            "name": "scrcpytouch"
         }
     ]
 }

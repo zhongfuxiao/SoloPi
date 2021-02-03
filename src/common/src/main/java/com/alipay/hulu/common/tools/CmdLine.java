@@ -25,7 +25,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Arrays;
+import java.util.LinkedList;
 import java.util.Queue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -108,18 +110,62 @@ public class CmdLine implements AbstCmdLine, WrapSocket {
      * @throws Exception
      */
     public void writeCommand(String cmd) {
+        if (cmd == null) {
+            cmd = "";
+        }
         try {
             CmdTools.logcatCmd(cmdTag + cmd);
+            if (!cmd.endsWith("\n")) {
+                cmd = cmd + "\n";
+            }
             if (isAdb) {
                 stream.write(cmd);
             } else {
                 DataOutputStream stream = new DataOutputStream(suProcess.getOutputStream());
-                String content = cmd + "\n";
-                stream.writeBytes(content);
+                stream.writeBytes(cmd);
                 stream.flush();
             }
         } catch (Exception e) {
-            LogUtil.e(TAG, "Write command " + cmd + " failed", e);
+            if (cmd.length() > 100) {
+                LogUtil.e(TAG, "Write command " + cmd.substring(0, 100) + "... failed", e);
+            } else {
+                LogUtil.e(TAG, "Write command " + cmd + "... failed", e);
+            }
+        }
+    }
+
+    /**
+     * 读取命令行当前所有输出
+     *
+     * @return
+     */
+    public String readUntilSomething() {
+        try {
+            if (isAdb) {
+                BlockingQueue<byte[]> queue = (BlockingQueue<byte[]>) stream.getReadQueue();
+                StringBuilder builder = new StringBuilder();
+                // 读取消息
+                synchronized (stream.getReadQueue()) {
+                    String content = new String(queue.take());
+                    builder.append(content);
+                    while (!queue.isEmpty()) {
+                        content = new String(queue.poll());
+                        builder.append(content);
+                    }
+                    stream.getReadQueue().notifyAll();
+                }
+                return builder.toString();
+            } else {
+                StringBuilder stringBuilder = new StringBuilder();
+                while (!readList.isEmpty()) {
+                    stringBuilder.append(new String(readList.poll()));
+                }
+
+                return stringBuilder.toString();
+            }
+        } catch (Exception e) {
+            LogUtil.e(TAG, "Read content failed", e);
+            return null;
         }
     }
 
@@ -213,5 +259,60 @@ public class CmdLine implements AbstCmdLine, WrapSocket {
     public void disconnect() {
         ((ByteQueueInputStream) inputStream).closeSocketForwardingMode();
         LogUtil.i(TAG, "Wrap Connection disconnect");
+    }
+
+    /**
+     * 获取命令行读取器
+     * @return
+     */
+    public CmdLineReader getReader() {
+        return new CmdLineReader(this);
+    }
+
+    public String getCmdTag() {
+        return cmdTag;
+    }
+
+    public static class CmdLineReader {
+        private CmdLine cmdLine;
+        private Queue<String> outputQueue;
+        private int curPos;
+        private CmdLineReader(CmdLine cmdLine) {
+            this.cmdLine = cmdLine;
+            outputQueue = new LinkedList<>();
+            curPos = 0;
+        }
+
+        public String readLine() {
+            StringBuilder buffer = new StringBuilder();
+            boolean eol = false;
+            while (!eol) {
+                if (outputQueue.isEmpty()) {
+                    String newContent = cmdLine.readUntilSomething();
+                    if (newContent == null) {
+                        return buffer.toString();
+                    }
+                    outputQueue.add(newContent);
+                    curPos = 0;
+                }
+
+                String first = outputQueue.peek();
+                if (first == null) {
+                    continue;
+                }
+                int nextEol = -1;
+                if ((nextEol = first.indexOf('\n', curPos)) < 0) {
+                    buffer.append(first, curPos, first.length());
+                    outputQueue.poll();
+                    curPos = 0;
+                } else {
+                    buffer.append(first, curPos, nextEol);
+                    eol = true;
+                    curPos = nextEol + 1;
+                }
+            }
+
+            return buffer.toString();
+        }
     }
 }

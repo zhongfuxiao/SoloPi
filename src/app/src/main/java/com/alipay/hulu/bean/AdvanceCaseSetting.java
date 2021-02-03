@@ -15,6 +15,8 @@
  */
 package com.alipay.hulu.bean;
 
+import java.util.List;
+
 /**
  * Created by lezhou.wyl on 2018/7/16.
  */
@@ -22,6 +24,24 @@ public class AdvanceCaseSetting {
 
     private String descriptorMode;
     private int version;
+    private List<CaseParamBean> params;
+    private String overrideApp;
+    private CaseRunningParam runningParam;
+
+    public AdvanceCaseSetting() {
+
+    }
+
+    public AdvanceCaseSetting(AdvanceCaseSetting old) {
+        if (old == null) {
+            return;
+        }
+        this.overrideApp = old.overrideApp;
+        this.descriptorMode = old.descriptorMode;
+        this.params = old.params;
+        this.runningParam = old.runningParam;
+        this.version = old.version;
+    }
 
     public String getDescriptorMode() {
         return descriptorMode;
@@ -37,5 +57,29 @@ public class AdvanceCaseSetting {
 
     public void setVersion(int version) {
         this.version = version;
+    }
+
+    public String getOverrideApp() {
+        return overrideApp;
+    }
+
+    public void setOverrideApp(String overrideApp) {
+        this.overrideApp = overrideApp;
+    }
+
+    public List<CaseParamBean> getParams() {
+        return params;
+    }
+
+    public void setParams(List<CaseParamBean> params) {
+        this.params = params;
+    }
+
+    public CaseRunningParam getRunningParam() {
+        return runningParam;
+    }
+
+    public void setRunningParam(CaseRunningParam runningParam) {
+        this.runningParam = runningParam;
     }
 }

@@ -16,7 +16,7 @@
 package com.alipay.hulu.screenRecord;
 
 import android.annotation.TargetApi;
-import android.app.Service;
+import android.app.Notification;
 import android.content.Context;
 import android.content.Intent;
 import android.media.MediaCodecInfo;
@@ -26,11 +26,14 @@ import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import android.view.WindowManager;
 
+import com.alipay.hulu.R;
+import com.alipay.hulu.common.application.LauncherApplication;
+import com.alipay.hulu.common.injector.InjectorService;
 import com.alipay.hulu.common.utils.FileUtils;
 import com.alipay.hulu.common.utils.LogUtil;
+import com.alipay.hulu.service.BaseService;
 import com.alipay.hulu.util.VideoUtils;
 
 import java.io.File;
@@ -39,22 +42,33 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import static android.app.Activity.RESULT_OK;
 
 /**
  * Created by qiaoruikai on 2019/1/9 3:31 PM.
  */
 @TargetApi(value = Build.VERSION_CODES.LOLLIPOP)
-public class SimpleRecordService extends Service {
+public class SimpleRecordService extends BaseService {
+    private static final int RECORD_SERVICE_NOTIFICATION_ID = 36231;
 
     public static final String INTENT_WIDTH =  "INTENT_WIDTH";
     public static final String INTENT_HEIGHT =  "INTENT_HEIGHT";
     public static final String INTENT_FRAME_RATE =  "INTENT_FRAME_RATE";
     public static final String INTENT_VIDEO_BITRATE =  "INTENT_VIDEO_BITRATE";
     public static final String INTENT_EXCEPT_DIFF =  "INTENT_EXCEPT_DIFF";
+    public static final String VIDEO_DIR = "ScreenCaptures";
 
-    private static final String TAG = RecordService.class.getSimpleName();
-    private static final String VIDEO_DIR = "ScreenCaptures";
+    private static final String TAG = SimpleRecordService.class.getSimpleName();
+    private static final int NOTIFICATION_ID = 19222;
+
+    private static final int TYPE_TOAST = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY: WindowManager.LayoutParams.TYPE_TOAST;
+
+    static {
+        LauncherApplication.getInstance().registerSelfAsForegroundService(SimpleRecordService.class);
+    }
 
     private boolean isRecording;
     private MediaProjectionManager mMediaProjectionManager;
@@ -73,8 +87,13 @@ public class SimpleRecordService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+
+        Notification notification = generateNotificationBuilder().setContentText(getString(R.string.service_notification__solopi_record_running)).setSmallIcon(R.drawable.solopi_main).build();
+        startForeground(RECORD_SERVICE_NOTIFICATION_ID, notification);
+
         mHandler = new Handler();
         LogUtil.d(TAG, "onCreate");
+        InjectorService.g().register(this);
 
         mMediaProjectionManager = (MediaProjectionManager)getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         mNotifications = new Notifications(getApplicationContext());
@@ -83,13 +102,13 @@ public class SimpleRecordService extends Service {
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
-        return new RecordBinder(this);
+        return new SimpleRecordService.RecordBinder(this);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         LogUtil.d(TAG, "onStart");
-        stopForeground(false);
+//        stopForeground(false);
 
         return super.onStartCommand(intent, flags, startId);
     }
@@ -145,9 +164,10 @@ public class SimpleRecordService extends Service {
 
     @Override
     public void onDestroy() {
-        LogUtil.d(TAG, "onDestroy");
-
         super.onDestroy();
+        stopForeground(false);
+
+        LogUtil.d(TAG, "onDestroy");
     }
 
 
@@ -204,6 +224,7 @@ public class SimpleRecordService extends Service {
         return lastRecorderStartTime;
     }
 
+
     private VideoEncodeConfig createVideoConfig(Intent intent) {
         // 不同系统，不同硬件，codec不一样，无法传递
         MediaCodecInfo[] codecs = VideoUtils.findEncodersByType(ScreenRecorder.VIDEO_AVC);
@@ -248,6 +269,10 @@ public class SimpleRecordService extends Service {
 
         public long stopRecord() {
             return recordRef.get().stopRecorder();
+        }
+
+        public Context loadContext() {
+            return recordRef.get();
         }
     }
 }

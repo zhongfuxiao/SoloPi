@@ -27,12 +27,13 @@ import android.content.pm.PackageManager;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
-import android.support.v7.app.AlertDialog;
+import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -67,6 +68,8 @@ import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+
+import androidx.appcompat.app.AlertDialog;
 
 import static android.view.Surface.ROTATION_0;
 
@@ -143,6 +146,8 @@ public class FloatWinService extends BaseService {
 
 	private OnStopListener stopListener = null;
 
+	private OnHomeListener homeListener = null;
+
 	private int recordCount = 0;
 	private boolean isCountTime = false;
 
@@ -170,6 +175,10 @@ public class FloatWinService extends BaseService {
 
 	private String appPackage = "";
 	private String appName = "";
+
+	static {
+		LauncherApplication.getInstance().registerSelfAsForegroundService(FloatWinService.class);
+	}
 
 	@Subscriber(@Param(SubscribeParamEnum.APP))
 	public void setAppPackage(String appPackage){
@@ -216,7 +225,7 @@ public class FloatWinService extends BaseService {
 			messageText = (TextView) v.findViewById(R.id.loading_dialog_text);
 			loadingDialog = new AlertDialog.Builder(this, R.style.AppDialogTheme)
 					.setView(v)
-					.setNegativeButton("隐藏", new DialogInterface.OnClickListener() {
+					.setNegativeButton(R.string.float__hide, new DialogInterface.OnClickListener() {
 						@Override
 						public void onClick(DialogInterface dialog, int which) {
 							dialog.dismiss();
@@ -224,7 +233,7 @@ public class FloatWinService extends BaseService {
 					})
 					.create();
 			// 设置dialog
-			loadingDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+			loadingDialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
 			loadingDialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
 			loadingDialog.setCancelable(false);
 		}
@@ -249,13 +258,16 @@ public class FloatWinService extends BaseService {
 		super.onCreate();
 		LogUtil.d(TAG, "onCreate");
 
+		Notification notification = generateNotificationBuilder().setContentText(getString(R.string.float__toast_title)).setSmallIcon(R.drawable.solopi_main).build();
+		startForeground(NOTIFICATION_ID, notification);
+
 		handler = new TimeProcessHandler(this);
 
 		mInjectorService = LauncherApplication.getInstance().findServiceByName(InjectorService.class.getName());
 		mInjectorService.register(this);
 
 		if (provider == null) {
-			provider = new AppInfoProvider();
+			provider = AppInfoProvider.getInstance();
 			mInjectorService.register(provider);
 		}
 
@@ -282,7 +294,7 @@ public class FloatWinService extends BaseService {
 	 * 初始化界面
 	 */
 	private void createView() {
-		view = LayoutInflater.from(this).inflate(R.layout.float_win, null);
+		view = LayoutInflater.from(ContextUtil.getContextThemeWrapper(this, R.style.AppTheme)).inflate(R.layout.float_win, null);
 		// 关闭按钮
 		close = (ImageView) view.findViewById(R.id.closeIcon);
 		// 录制开关
@@ -364,7 +376,7 @@ public class FloatWinService extends BaseService {
 		wm = (WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
 		// 设置LayoutParams(全局变量）相关参数
 		wmParams = ((MyApplication) getApplication()).getFloatWinParams();
-		wmParams.type = WindowManager.LayoutParams.TYPE_SYSTEM_ALERT;
+		wmParams.type = com.alipay.hulu.common.constant.Constant.TYPE_ALERT;
 		wmParams.flags |= 8;
 		wmParams.gravity = Gravity.LEFT | Gravity.TOP; // 调整悬浮窗口至左上角
 		// 以屏幕左上角为原点，设置x、y初始值
@@ -446,8 +458,9 @@ public class FloatWinService extends BaseService {
 		homeButton.setOnClickListener(new OnClickListener() {
 			@Override
 			public void onClick(View v) {
-				goToHomePage();
-
+				if (homeListener == null || !homeListener.onHomeClick()) {
+					goToHomePage();
+				}
 			}
 		});
 
@@ -528,22 +541,28 @@ public class FloatWinService extends BaseService {
 	 */
 	private void updateViewPosition() {
 		// 更新浮动窗口位置参数
-		wmParams.x = (int) (x - mTouchStartX);
-		wmParams.y = (int) (y - mTouchStartY);
-		wmParams.alpha = 1F;
-		wm.updateViewLayout(view, wmParams);
+		try {
+			wmParams.x = (int) (x - mTouchStartX);
+			wmParams.y = (int) (y - mTouchStartY);
+			wmParams.alpha = 1F;
+			wm.updateViewLayout(view, wmParams);
+		} catch (Throwable t) {
+			LogUtil.e(TAG, "Fail update View layout", t);
+		}
 	}
 
 	@Override
 	public int onStartCommand(Intent intent, int flags, int startId) {
 		LogUtil.d(TAG, "onStart");
-		Notification notification = new Notification.Builder(this).setContentText("Soloπ悬浮窗正在运行").setSmallIcon(R.drawable.solopi_main).build();
-		startForeground(NOTIFICATION_ID, notification);
 		return super.onStartCommand(intent, flags, startId);
 	}
 
 	@Override
 	public void onDestroy() {
+		super.onDestroy();
+		stopForeground(true);
+		mNotificationManager.cancel(NOTIFICATION_ID);
+
 		// 清理定时任务
 		mInjectorService.unregister(this.provider);
 		this.provider = null;
@@ -561,7 +580,6 @@ public class FloatWinService extends BaseService {
 		editor.putString("state", "stop");
 		editor.apply();
 		// 取消注册广播
-		super.onDestroy();
 	}
 
 
@@ -598,7 +616,6 @@ public class FloatWinService extends BaseService {
 
 		/**
 		 * 提供主窗体
-		 *
 		 * @param baseView
 		 * @param params
 		 */
@@ -629,8 +646,37 @@ public class FloatWinService extends BaseService {
 		}
 
 		/**
+		 * 设置录制按钮图标
+		 * @param icon
+		 */
+		public void updateRunImage(int icon) {
+			if (floatWinServiceRef.get() == null) {
+				return;
+			}
+
+			FloatWinService service = floatWinServiceRef.get();
+			if (icon != 0) {
+				service.record.setImageResource(icon);
+				if (icon == RECORDING_ICON) {
+					service.recordCount = 0;
+					service.isCountTime = true;
+					service.recordTime.setVisibility(View.VISIBLE);
+					service.handler.sendEmptyMessageDelayed(UPDATE_RECORD_TIME, 1000);
+				} else if (icon == PLAY_ICON) {
+					service.recordCount = 0;
+					service.isCountTime = false;
+					service.recordTime.setVisibility(View.INVISIBLE);
+				}
+			} else {
+				if (service.isCountTime) {
+					service.recordTime.setVisibility(View.INVISIBLE);
+					service.isCountTime = false;
+				}
+			}
+		}
+
+		/**
 		 * 提供扩展窗体
-		 *
 		 * @param expendView
 		 * @param params
 		 */
@@ -734,6 +780,11 @@ public class FloatWinService extends BaseService {
 			service.stopListener = listener;
 		}
 
+		public void registerHomeClickListener(OnHomeListener listener) {
+			FloatWinService service = floatWinServiceRef.get();
+			service.homeListener = listener;
+		}
+
 		/**
 		 * 隐藏悬浮窗
 		 */
@@ -779,9 +830,50 @@ public class FloatWinService extends BaseService {
 		public void updateFloatIcon(int res) {
 			final FloatWinService service = floatWinServiceRef.get();
 			service.backgroundIcon.setImageResource(res);
-			service.cardIcon.setImageResource(res);
 		}
 
+		/**
+		 * 开始计时
+		 */
+		public void startTimeRecord() {
+			final FloatWinService service = floatWinServiceRef.get();
+
+			// 重置计时
+			service.recordCount = 0;
+			if (!service.isCountTime) {
+				service.isCountTime = true;
+				service.recordTime.setVisibility(View.VISIBLE);
+				service.handler.sendEmptyMessageDelayed(UPDATE_RECORD_TIME, 1000);
+			}
+		}
+
+		/**
+		 * 停止计时
+		 */
+		public void stopRecordTime() {
+			final FloatWinService service = floatWinServiceRef.get();
+
+			if (service.isCountTime) {
+				service.isCountTime = false;
+				service.recordTime.setVisibility(View.GONE);
+			}
+		}
+
+		/**
+		 * 更新文字
+		 * @param text
+		 */
+		public void updateText(String text) {
+			final FloatWinService service = floatWinServiceRef.get();
+
+			if (!StringUtil.isEmpty(text)) {
+				service.recordTime.setVisibility(View.VISIBLE);
+				service.recordTime.setText(text);
+			} else {
+				service.recordTime.setVisibility(View.GONE);
+				service.recordTime.setText("");
+			}
+		}
 
 		/**
 		 * 检查点是否在悬浮窗内
@@ -794,7 +886,7 @@ public class FloatWinService extends BaseService {
 				return false;
 			}
 
-			// 看下是否点到Soloπ图标
+			// 看下是否点到SoloPi图标
 			FloatWinService service = floatWinServiceRef.get();
 			Rect rect = new Rect();
 			service.view.getDrawingRect(rect);
@@ -803,6 +895,19 @@ public class FloatWinService extends BaseService {
 			Rect r = new Rect();
 			service.view.getWindowVisibleDisplayFrame(r);
 			WindowManager.LayoutParams params = (WindowManager.LayoutParams) service.view.getLayoutParams();
+
+			// Android 10 尺寸获取问题
+			if (Build.VERSION.SDK_INT >= 29) {
+				DisplayMetrics metrics = new DisplayMetrics();
+				service.wm.getDefaultDisplay().getRealMetrics(metrics);
+				r.right = metrics.widthPixels;
+				Point smallP = new Point();
+				service.view.getDisplay().getCurrentSizeRange(smallP, new Point());
+				int decoSize = metrics.heightPixels - smallP.y;
+				if (r.top > decoSize) {
+					r.top = decoSize;
+				}
+			}
 
 			int x = r.left + params.x;
 			int y = r.top + params.y;
@@ -827,12 +932,12 @@ public class FloatWinService extends BaseService {
 	private void hideFloatWin() {
 		cardView.setVisibility(View.GONE);
 		Display screenDisplay = ((WindowManager)FloatWinService.this.getSystemService(WINDOW_SERVICE)).getDefaultDisplay();
-		Point size = new Point();
-		screenDisplay.getSize(size);
-		x = size.x;
+		DisplayMetrics metrics = new DisplayMetrics();
+		screenDisplay.getRealMetrics(metrics);
+		x = metrics.widthPixels;
 
 		//y = (size.y - statusBarHeight) / 2;
-		y = size.y / 2 - 4 * statusBarHeight;
+		y = metrics.heightPixels / 2 - 4 * statusBarHeight;
 		updateViewPosition();
 		// handler.removeCallbacks(task);
 		backgroundIcon.setVisibility(View.VISIBLE);
@@ -858,6 +963,10 @@ public class FloatWinService extends BaseService {
 		boolean onStopClick();
 	}
 
+	public interface OnHomeListener {
+		boolean onHomeClick();
+	}
+
 	private static final class TimeProcessHandler extends Handler {
 		private WeakReference<FloatWinService> serviceRef;
 
@@ -876,6 +985,9 @@ public class FloatWinService extends BaseService {
 			switch (msg.what) {
 				case UPDATE_RECORD_TIME:
 					// 每秒钟增加recordCount，作为已录制的时间
+					if (!service.isCountTime) {
+						return;
+					}
 					service.recordCount++;
 					service.recordTime.setText(timefyCount(service.recordCount));
 

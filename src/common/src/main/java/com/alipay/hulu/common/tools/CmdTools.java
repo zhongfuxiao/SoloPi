@@ -21,9 +21,10 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Looper;
-import android.support.annotation.IntRange;
+import androidx.annotation.IntRange;
 import android.util.Base64;
 
+import com.alipay.hulu.common.R;
 import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.bean.ProcessInfo;
 import com.alipay.hulu.common.injector.InjectorService;
@@ -31,6 +32,7 @@ import com.alipay.hulu.common.injector.param.RunningThread;
 import com.alipay.hulu.common.injector.param.SubscribeParamEnum;
 import com.alipay.hulu.common.injector.param.Subscriber;
 import com.alipay.hulu.common.injector.provider.Param;
+import com.alipay.hulu.common.service.SPService;
 import com.alipay.hulu.common.utils.FileUtils;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.MiscUtil;
@@ -42,6 +44,7 @@ import com.cgutman.adblib.AdbCrypto;
 import com.cgutman.adblib.AdbStream;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
@@ -49,10 +52,21 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.StringReader;
+import java.math.BigInteger;
 import java.net.Socket;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.IntBuffer;
+import java.security.KeyFactory;
 import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.RSAPublicKeySpec;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -93,6 +107,8 @@ public class CmdTools {
     private static volatile AdbConnection connection;
 
     private static Boolean isRoot = null;
+
+    public static String DEVICE_ID = null;
 
     private static List<Process> processes = new ArrayList<>();
 
@@ -240,6 +256,9 @@ public class CmdTools {
      * @returnz
      */
     public static boolean isRooted(){
+        if (true) {
+            return false;
+        }
         boolean bool = false;
 
         // 避免重复查找文件
@@ -286,61 +305,83 @@ public class CmdTools {
      * @return 分行结果
      */
     public static String[] ps(String filter) {
-        if (!RomUtils.isOppoSystem() && Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
-            try {
-                Process p;
-                if (filter != null && filter.length() > 0) {
-                    p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps | grep \"" + filter + "\""});
-                } else {
-                    p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps"});
-                }
-                BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                List<String> results = new ArrayList<>();
-                while ((line = br.readLine()) != null) {
+        try {
+            if (!RomUtils.isOppoSystem() && Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+                try {
+                    Process p;
+                    if (filter != null && filter.length() > 0) {
+                        p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps | grep '" + filter + "'"});
+                    } else {
+                        p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps"});
+                    }
+                    BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                    String line;
+                    List<String> results = new ArrayList<>();
+                    while ((line = br.readLine()) != null) {
 //            		LogUtil.d(TAG, "ERR************" + line);
-                    results.add(line);
+                        results.add(line);
+                    }
+                    return results.toArray(new String[results.size()]);
+                } catch (IOException e) {
+                    LogUtil.e(TAG, "Read ps content failed", e);
+                    return new String[0];
                 }
-                return results.toArray(new String[results.size()]);
-            } catch (IOException e) {
-                LogUtil.e(TAG, "Read ps content failed", e);
-                return new String[0];
-            }
-        } else if (Build.VERSION.SDK_INT <= 25) {
-
-            // Android 7.0, 7.1无法通过应用权限获取所有进程
-            if (isRooted()) {
-                if (filter != null && filter.length() > 0) {
-                    return execRootCmd("ps | grep \"" + filter + "\"", null, true, null).toString().split("\n");
+            } else if (Build.VERSION.SDK_INT <= 25) {
+                // Android 7.0, 7.1无法通过应用权限获取所有进程
+                if (isRooted()) {
+                    if (filter != null && filter.length() > 0) {
+                        return execRootCmd("ps | grep '" + filter + "'", null, true, null).toString().split("\n");
+                    } else {
+                        return execRootCmd("ps", null, true, null).toString().split("\n");
+                    }
                 } else {
-                    return execRootCmd("ps", null, true, null).toString().split("\n");
+                    if (filter != null && filter.length() > 0) {
+
+                        // 存在ps命令调用超时情况
+                        return execAdbCmd("ps | grep '" + filter + "'", 2500).split("\n");
+                    } else {
+                        return execAdbCmd("ps", 2500).split("\n");
+                    }
                 }
             } else {
-                if (filter != null && filter.length() > 0) {
+                String[] result;
+                // Android O ps为toybox实现，功能与标准ps命令基本相同，需要-A参数获取全部进程
+                if (isRooted()) {
+                    if (filter != null && filter.length() > 0) {
+                        result = execRootCmd("ps -ef | grep '" + filter + "'", null, true, null).toString().split("\n");
+                    } else {
+                        result = execRootCmd("ps -ef", null, true, null).toString().split("\n");
+                    }
+                } else {
+                    if (filter != null && filter.length() > 0) {
 
-                    // 存在ps命令调用超时情况
-                    return execAdbCmd("ps | grep \"" + filter + "\"", 2500).split("\n");
-                } else {
-                    return execAdbCmd("ps", 2500).split("\n");
+                        // 存在ps命令调用超时情况
+                        result = execAdbCmd("ps -ef | grep '" + filter + "'", 2500).split("\n");
+                    } else {
+                        result = execAdbCmd("ps -ef", 2500).split("\n");
+                    }
                 }
-            }
-        } else {
-            // Android O ps为toybox实现，功能与标准ps命令基本相同，需要-A参数获取全部进程
-            if (isRooted()) {
-                if (filter != null && filter.length() > 0) {
-                    return execRootCmd("ps -A | grep \"" + filter + "\"", null, true, null).toString().split("\n");
-                } else {
-                    return execRootCmd("ps -A", null, true, null).toString().split("\n");
-                }
-            } else {
-                if (filter != null && filter.length() > 0) {
 
-                    // 存在ps命令调用超时情况
-                    return execAdbCmd("ps -A | grep \"" + filter + "\"", 2500).split("\n");
-                } else {
-                    return execAdbCmd("ps -A", 2500).split("\n");
+                if (StringUtil.isEmpty(filter)) {
+                    return result;
                 }
+
+                // 过滤 grep XXXX 的内容
+                ArrayList<String> filtered = new ArrayList<>(result.length);
+                for (String line : result) {
+                    if (StringUtil.contains(line, "grep " + filter)) {
+                        continue;
+                    } else if (StringUtil.contains(line, "grep '" + filter)) {
+                        continue;
+                    }
+                    filtered.add(line);
+                }
+
+                return filtered.toArray(new String[]{});
             }
+        } catch (Exception e) {
+            LogUtil.e(TAG, "Fail to execute ps func", e);
+            return new String[0];
         }
     }
 
@@ -366,6 +407,20 @@ public class CmdTools {
     }
 
     /**
+     * 激活辅助功能
+     * @param key
+     * @param value
+     * @return
+     */
+    public static String putAccessibility(String key, String value) {
+        String cmd = "content call --uri content://settings/secure --method PUT_secure --arg " + key + "  --extra _user:i:0 --extra value:s:" + value;
+        if (isRooted()) {
+            return execRootCmd(cmd, null, true, null).toString();
+        }
+        return execAdbCmd(cmd, 0);
+    }
+
+    /**
      * 带超时的高权限命令执行
      * @param cmd shell命令（shell之后的部分）
      * @param maxTime 最长执行时间
@@ -376,6 +431,64 @@ public class CmdTools {
             return execRootCmd(cmd, maxTime).toString();
         }
         return execAdbCmd(cmd, maxTime);
+    }
+
+    /**
+     * 获取顶部包名和activity
+     * @return
+     */
+    public static String[] getTopPkgAndActivity() {
+        if (Build.VERSION.SDK_INT >= 29) {
+            String result = execHighPrivilegeCmd("dumpsys window visible-apps | grep \"mCurrentFocus\"");
+            if (StringUtil.isEmpty(result)) {
+                return null;
+            }
+            result = result.trim();
+
+            // 目标区分
+            String[] split = result.split("\\s+");
+            if (split.length < 3) {
+                return null;
+            }
+            String[] pA = split[split.length - 1].split("/");
+            if (pA.length != 2) {
+                return null;
+            }
+
+            // .开头优化
+            if (pA[1].startsWith(".")) {
+                pA[1] = pA[0] + pA[1];
+            }
+            if (pA[1].contains("}")) {
+                pA[1] = pA[1].split("\\}")[0];
+            }
+            LogUtil.i(TAG, "Get top pkg and activity::" + Arrays.toString(pA));
+            return pA;
+        } else {
+            String result = execHighPrivilegeCmd("dumpsys activity activities | grep 'Running' -A3 | grep 'Run #'");
+            if (StringUtil.isEmpty(result)) {
+                return null;
+            }
+            result = result.trim();
+
+            // 目标区分
+            String target = result.split("\n")[0].trim();
+            String[] split = target.split("\\s+");
+            if (split.length < 5) {
+                return null;
+            }
+            String[] pA = split[split.length - 2].split("/");
+            if (pA.length != 2) {
+                return null;
+            }
+
+            // .开头优化
+            if (pA[1].startsWith(".")) {
+                pA[1] = pA[0] + pA[1];
+            }
+            LogUtil.i(TAG, "Get top pkg and activity::" + Arrays.toString(pA));
+            return pA;
+        }
     }
 
     public static String execAdbExtCmd(final  String cmd, final  int wait) {
@@ -429,6 +542,15 @@ public class CmdTools {
             LogUtil.e(TAG, "Throw Exception: " + e.getMessage(), e);
             return "";
         }
+    }
+
+    /**
+     * 执行点击操作
+     * @param x
+     * @param y
+     */
+    public static void execClick(int x, int y) {
+        execAdbCmd("input tap " + x + " " + y, 0);
     }
 
     /**
@@ -712,7 +834,7 @@ public class CmdTools {
             if (ERROR_NO_CONNECTION.equals(result) || ERROR_CONNECTION_ILLEGAL_STATE.equals(result)) {
                 generateConnection();
                 MiscUtil.sleep(2000);
-            } else if (ERROR_CONNECTION_COMMON_EXCEPTION.equals("result")) {
+            } else if (ERROR_CONNECTION_COMMON_EXCEPTION.equals(result)) {
                 MiscUtil.sleep(2000);
             } else {
                 break;
@@ -836,7 +958,10 @@ public class CmdTools {
         // 开始连接adb
         LogUtil.i(TAG, "Socket connecting...");
         try {
-            sock = new Socket("localhost", 5555);
+            String server = SPService.getString(SPService.KEY_ADB_SERVER, "localhost:5555");
+            String[] split = server.split(":");
+            sock = new Socket(split[0], Integer.parseInt(split[1]));
+            sock.setReuseAddress(true);
         } catch (IOException e) {
             LogUtil.e(TAG, "Throw IOException", e);
             return false;
@@ -864,6 +989,11 @@ public class CmdTools {
         }
         connection = conn;
         LogUtil.i(TAG, "ADB connected");
+
+        if (DEVICE_ID == null) {
+            DEVICE_ID = StringUtil.trim(execHighPrivilegeCmd("getprop ro.serialno"));
+            SPService.putString(SPService.KEY_SERIAL_ID, DEVICE_ID);
+        }
 
         // ADB成功连接后，开启ADB状态监测
         startAdbStatusCheck();
@@ -1082,7 +1212,7 @@ public class CmdTools {
 
 
     public static String getActivityName() {
-        String result = execAdbCmd("dumpsys activity top | grep ACTIVITY | grep -o /[^[:space:]]*", 0);
+        String result = execAdbCmd("dumpsys activity top | grep ACTIVITY | grep -o /[^[:space:]]*", 1000);
 
         if (result.length() < 2) {
             return null;
@@ -1094,7 +1224,7 @@ public class CmdTools {
     }
 
     public static String getPageUrl() {
-        String result = execAdbCmd("dumpsys activity top | grep -o ' url=[^[:space:]]*'", 0).trim();
+        String result = execAdbCmd("dumpsys activity top | grep -o ' url=[^[:space:]]*'", 1000).trim();
 
         if (result.length() < 5) {
             return null;
@@ -1186,7 +1316,46 @@ public class CmdTools {
     }
 
     public static String getTopActivity() {
-        return execAdbCmd("dumpsys activity top | grep ACTIVITY", 0);
+        if (Build.VERSION.SDK_INT >= 29) {
+            return filterBackActivity(execAdbCmd("window visible-apps | grep \"Activity #\"", 1000));
+        } else {
+            return execAdbCmd("dumpsys activity top | grep ACTIVITY", 1000);
+        }
+    }
+
+    public static String getTopActivity(String pkg) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            return filterBackActivity(execAdbCmd("window visible-apps | grep -e \"Activity #.*" + pkg + "\"", 1000));
+        } else {
+            return execAdbCmd("dumpsys activity top | grep 'ACTIVITY " + pkg + "'", 1000);
+        }
+    }
+
+    /**
+     * 过滤Window下重复activity
+     * @param origin
+     * @return
+     */
+    private static String filterBackActivity(String origin) {
+        Set<String> windows = new HashSet<>();
+        List<String> accept = new ArrayList<>();
+        String[] lines = origin.split("\\s*\\n\\s*");
+        for (String line: lines) {
+            String[] parts = line.split("\\s+");
+            if (parts.length < 8) {
+                continue;
+            }
+
+            // 每个Window只保留第一条
+            if (windows.contains(parts[parts.length - 1])) {
+                continue;
+            }
+
+            windows.add(parts[parts.length - 1]);
+            accept.add(line);
+        }
+
+        return StringUtil.join("\n", accept);
     }
 
     /**
@@ -1200,6 +1369,45 @@ public class CmdTools {
             return execAdbCmd("dumpsys SurfaceFlinger --list | grep '" + app + "'", 0);
         }
     }
+
+    /**
+     * 切换到输入法
+     * @param ime
+     */
+    public static void switchToIme(final String ime) {
+        // 主线程的话走Callable
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Callable<Boolean> callable = new Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    _switchToIme(ime);
+                    return true;
+                }
+            };
+            Future<Boolean> result = cachedExecutor.submit(callable);
+
+            // 等待执行完毕
+            try {
+                result.get();
+            } catch (InterruptedException e) {
+                LogUtil.e(TAG, "Catch java.lang.InterruptedException: " + e.getMessage(), e);
+            } catch (ExecutionException e) {
+                LogUtil.e(TAG, "Catch java.util.concurrent.ExecutionException: " + e.getMessage(), e);
+            }
+            return;
+        }
+        _switchToIme(ime);
+    }
+
+    /**
+     * 真正切换输入法
+     * @param ime
+     */
+    private static void _switchToIme(String ime) {
+        execHighPrivilegeCmd("ime enable " + ime);
+        execHighPrivilegeCmd("ime set " + ime);
+    }
+
 
     /**
      * 判断文件是否存在
@@ -1280,27 +1488,27 @@ public class CmdTools {
                                 break;
                             }
                         }
-                    }
 
-                    // 恢复失败
-                    if (!genResult) {
-                        Context con = LauncherApplication.getInstance().loadActivityOnTop();
-                        if (con == null) {
-                            con = LauncherApplication.getInstance().loadRunningService();
-                        }
+                        // 恢复失败
+                        if (!genResult) {
+                            Context con = LauncherApplication.getInstance().loadActivityOnTop();
+                            if (con == null) {
+                                con = LauncherApplication.getInstance().loadRunningService();
+                            }
 
-                        if (con == null) {
-                            LauncherApplication.getInstance().showToast("ADB连接中断，请尝试重新开启调试端口");
+                            if (con == null) {
+                                LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.cmd__adb_break));
+                                return;
+                            }
+
+                            // 回首页
+                            LauncherApplication.getInstance().showDialog(con, StringUtil.getString(R.string.cmd__adb_break), StringUtil.getString(R.string.constant__sure), null);
+
+                            // 通知各个功能ADB挂了
+                            InjectorService.g().pushMessage(FATAL_ADB_CANNOT_RECOVER);
+
                             return;
                         }
-
-                        // 回首页
-                        LauncherApplication.getInstance().showDialog(con, "ADB连接中断，请尝试重新开启调试端口", "好的", null);
-
-                        // 通知各个功能ADB挂了
-                        InjectorService.g().pushMessage(FATAL_ADB_CANNOT_RECOVER);
-
-                        return;
                     }
                 }
 
@@ -1338,6 +1546,115 @@ public class CmdTools {
         return newPath;
     }
 
+
+    /**
+     * 读取外部ADB KEY信息
+     */
+    public static boolean readOuterAdbKey(File privKey, File pubKey) {
+        if (!privKey.exists() || !pubKey.exists()) {
+            LauncherApplication.getInstance().showToast("adb key文件不存在，请确认后重新导入");
+            return false;
+        }
+
+        if (connection != null && connection.isFine()) {
+            try {
+                connection.close();
+            } catch (IOException e1) {
+                LogUtil.e(TAG, "Read outer adb key throw exception", e1);
+            } finally {
+                connection = null;
+            }
+        }
+
+        try {
+            String content = FileUtils.readFile(privKey);
+            content = content.replace("-----BEGIN PRIVATE KEY-----\n", "");
+            content = content.replace("-----END PRIVATE KEY-----", "");
+            byte[] decoded = Base64.decode(content, Base64.DEFAULT);
+            PKCS8EncodedKeySpec encodedKeySpec = new PKCS8EncodedKeySpec(decoded);
+            File targetFile = new File(LauncherApplication.getInstance().getFilesDir(), "privKey");
+            FileOutputStream stream = new FileOutputStream(targetFile);
+            stream.write(encodedKeySpec.getEncoded());
+            stream.flush();
+            stream.close();
+        } catch (Exception e) {
+            LogUtil.e(TAG, "Copy Private Key failed", e);
+            return false;
+        }
+
+        try {
+            String content = FileUtils.readFile(pubKey);
+            if (StringUtil.isEmpty(content)) {
+                LauncherApplication.getInstance().showToast("Public Key为空");
+                return false;
+            }
+
+            PublicKey publicKey = parseAndroidPubKey(content);
+
+            File targetFile = new File(LauncherApplication.getInstance().getFilesDir(), "pubKey");
+            FileOutputStream stream = new FileOutputStream(targetFile);
+            stream.write(publicKey.getEncoded());
+            stream.flush();
+            stream.close();
+        } catch (Exception e) {
+            LogUtil.e(TAG, "Copy Private Key failed", e);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * parse android public key
+     * @param inputKey
+     * @return
+     */
+    public static PublicKey parseAndroidPubKey(String inputKey) {
+        BufferedReader bufferedReader = new BufferedReader(new StringReader(inputKey));
+        String line = null;
+        try {
+            line = bufferedReader.readLine();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        line = line.replaceAll(" .*@.*", "");
+        byte[] raw = Base64.decode(line, Base64.NO_WRAP);
+        ByteBuffer bb = ByteBuffer.wrap(raw);
+        bb.order(ByteOrder.LITTLE_ENDIAN);
+        IntBuffer intBuffer = bb.asIntBuffer();
+        int len = intBuffer.get();
+        BigInteger n0Inv = BigInteger.valueOf(intBuffer.get());
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream(len*4);
+        int[] dst = new int[len];
+        intBuffer.get(dst);
+        reverse(dst);
+        for (int i = 0; i < len; i++) {
+            int value = dst[i];
+            byte[] convertedBytes = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(value).array();
+            byteArrayOutputStream.write(convertedBytes, 0, convertedBytes.length);
+        }
+        byte[] n = byteArrayOutputStream.toByteArray();
+        byteArrayOutputStream.reset();
+        dst = new int[len];
+        intBuffer.get(dst);
+        reverse(dst);
+        for (int i = 0; i < len; i++) {
+            int value = dst[i];
+            byte[] convertedBytes = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(value).array();
+            byteArrayOutputStream.write(convertedBytes, 0, convertedBytes.length);
+        }
+        int e = intBuffer.get();
+
+        RSAPublicKey publicKey;
+        try {
+            publicKey = (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(new RSAPublicKeySpec(new BigInteger(1, n), BigInteger.valueOf(e)));
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
+        return publicKey;
+    }
+
+
     /**
      * 拷贝可执行文件
      * @param sourceF 源文件
@@ -1356,6 +1673,56 @@ public class CmdTools {
         execHighPrivilegeCmd(cmd);
 
         return exec;
+    }
+
+
+    /**
+     * <p>Reverses the order of the given array.</p>
+     *
+     * <p>This method does nothing for a {@code null} input array.</p>
+     *
+     * @param array  the array to reverse, may be {@code null}
+     */
+    public static void reverse(final int[] array) {
+        if (array == null) {
+            return;
+        }
+        reverse(array, 0, array.length);
+    }
+
+    /**
+     * <p>
+     * Reverses the order of the given array in the given range.
+     * </p>
+     *
+     * <p>
+     * This method does nothing for a {@code null} input array.
+     * </p>
+     *
+     * @param array
+     *            the array to reverse, may be {@code null}
+     * @param startIndexInclusive
+     *            the starting index. Undervalue (&lt;0) is promoted to 0, overvalue (&gt;array.length) results in no
+     *            change.
+     * @param endIndexExclusive
+     *            elements up to endIndex-1 are reversed in the array. Undervalue (&lt; start index) results in no
+     *            change. Overvalue (&gt;array.length) is demoted to array length.
+     * @since 3.2
+     */
+    public static void reverse(final int[] array, int startIndexInclusive, int endIndexExclusive) {
+        if (array == null) {
+            return;
+        }
+        int i = startIndexInclusive < 0 ? 0 : startIndexInclusive;
+        int j = Math.min(array.length, endIndexExclusive) - 1;
+        int tmp;
+        while (j > i) {
+            tmp = array[j];
+            array[j] = array[i];
+            array[i] = tmp;
+            j--;
+            i++;
+        }
     }
 
     public interface GrantHighPrivPermissionCallback {

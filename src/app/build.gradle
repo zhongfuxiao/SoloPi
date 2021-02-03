@@ -13,20 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-apply plugin: 'com.android.application'
+apply plugin: 'com.android.library'
 
 android {
-    compileSdkVersion 25
-    buildToolsVersion "26.0.2"
+    compileSdkVersion rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
     defaultConfig {
-        applicationId "com.alipay.hulu"
         minSdkVersion 18
-        targetSdkVersion 25
-        multiDexEnabled true
-    }
-    packagingOptions {
-        exclude 'META-INF/LICENSE'
-        exclude 'META-INF/DEPENDENCIES'
+        targetSdkVersion rootProject.ext.targetSdkVersion
     }
     buildTypes {
         release {
@@ -39,46 +33,35 @@ android {
             versionNameSuffix "-" + new Date().format("yyMMddHHmm")
         }
     }
-
-
-    signingConfigs {
-        release {
-            v1SigningEnabled true
-            v2SigningEnabled true
-        }
-    }
-
-    dexOptions {
-        javaMaxHeapSize "4g"
-    }
 }
 
 dependencies {
-    implementation 'com.android.support:support-v4:25.4.0'
-    implementation 'com.android.support:support-core-utils:25.4.0'
-    implementation 'com.android.support:appcompat-v7:25.4.0'
-    implementation 'com.android.support:recyclerview-v7:25.4.0'
-    implementation 'com.android.support:design:25.4.0'
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+    implementation 'androidx.legacy:legacy-support-core-utils:1.0.0'
+    implementation 'androidx.appcompat:appcompat:1.0.0'
+    implementation 'androidx.recyclerview:recyclerview:1.0.0'
+    implementation 'com.google.android.material:material:1.0.0'
     implementation 'com.github.lecho:hellocharts-library:1.5.8@aar'
-    implementation 'com.alibaba:fastjson:1.1.71.android'
-    implementation 'org.greenrobot:greendao:3.2.2'
+    implementation 'com.alibaba:fastjson:1.2.73'
+    implementation 'org.greenrobot:greendao:3.3.0'
     implementation 'com.squareup.okhttp3:okhttp:3.12.3'
-    implementation 'org.greenrobot:eventbus:3.1.1'
-    implementation 'com.dlazaro66.qrcodereaderview:qrcodereaderview:2.0.3'
-    implementation 'com.liulishuo.filedownloader:library:1.7.6'
+    implementation 'com.liulishuo.filedownloader:library:1.7.7'
+    implementation 'cn.dreamtobe.filedownloader:filedownloader-okhttp3-connection:1.1.0'
     implementation 'com.hyman:flowlayout-lib:1.1.2'
     implementation 'com.yydcdut:sdlv:0.7.6'
+    implementation 'com.atlassian.commonmark:commonmark:0.13.0'
+    implementation "com.google.zxing:core:3.4.0"
 
     implementation('com.theartofdev.edmodo:android-image-cropper:2.5.1') {
         exclude group: "com.android.support"
     }
-    implementation('com.github.bumptech.glide:glide:4.9.0') {
+    implementation('com.github.bumptech.glide:glide:4.11.0') {
         exclude group: "com.android.support"
     }
     implementation 'commons-io:commons-io:2.6'
     implementation ('com.orhanobut:logger:2.2.0') {
         exclude group: "com.android.support"
     }
-    implementation 'com.android.support:multidex:1.0.3'
+    compileOnly 'androidx.multidex:multidex:2.0.0'
     implementation project(':shared')
 }

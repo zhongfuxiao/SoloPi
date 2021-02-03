@@ -15,6 +15,7 @@
  */
 package com.alipay.hulu.service;
 
+import android.app.ProgressDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -24,8 +25,10 @@ import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Environment;
 import android.os.IBinder;
-import android.support.v7.app.AlertDialog;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.view.LayoutInflater;
@@ -34,9 +37,10 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.alipay.hulu.R;
+import com.alipay.hulu.activity.MyApplication;
+import com.alipay.hulu.bean.OperationStepResult;
 import com.alipay.hulu.bean.ReplayResultBean;
 import com.alipay.hulu.bean.ReplayStepInfoBean;
 import com.alipay.hulu.common.application.LauncherApplication;
@@ -48,9 +52,10 @@ import com.alipay.hulu.common.injector.param.Subscriber;
 import com.alipay.hulu.common.injector.provider.Param;
 import com.alipay.hulu.common.service.SPService;
 import com.alipay.hulu.common.service.ScreenCaptureService;
+import com.alipay.hulu.common.service.TouchService;
 import com.alipay.hulu.common.service.base.ExportService;
 import com.alipay.hulu.common.service.base.LocalService;
-import com.alipay.hulu.common.tools.BackgroundExecutor;
+import com.alipay.hulu.common.tools.CmdTools;
 import com.alipay.hulu.common.utils.ContextUtil;
 import com.alipay.hulu.common.utils.DeviceInfoUtil;
 import com.alipay.hulu.common.utils.FileUtils;
@@ -71,7 +76,7 @@ import com.alipay.hulu.shared.node.tree.OperationNode;
 import com.alipay.hulu.shared.node.tree.accessibility.AccessibilityNodeProcessor;
 import com.alipay.hulu.shared.node.tree.accessibility.AccessibilityProvider;
 import com.alipay.hulu.shared.node.tree.capture.CaptureTree;
-import com.alipay.hulu.shared.node.tree.export.OperationStepProvider;
+import com.alipay.hulu.shared.node.tree.export.OperationStepExporter;
 import com.alipay.hulu.shared.node.tree.export.bean.OperationStep;
 import com.alipay.hulu.shared.node.utils.AppUtil;
 import com.alipay.hulu.shared.node.utils.BitmapUtil;
@@ -80,15 +85,21 @@ import com.alipay.hulu.shared.node.utils.OperationUtil;
 import com.alipay.hulu.shared.node.utils.PrepareUtil;
 import com.alipay.hulu.shared.node.utils.RectUtil;
 import com.alipay.hulu.tools.HighLightService;
+import com.alipay.hulu.util.DialogUtils;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 操作回放服务
@@ -96,6 +107,7 @@ import java.util.concurrent.TimeUnit;
  */
 @LocalService
 public class CaseReplayManager implements ExportService {
+    public static final String REPLAY_STEP_FINISH_EVENT = "REPLAY_STEP_FINISH_EVENT";
     private static final String TAG = "CaseReplayManager";
 
     /**
@@ -119,6 +131,11 @@ public class CaseReplayManager implements ExportService {
     private OperationService operationService;
 
     /**
+     * 操作服务
+     */
+    private TouchService touchService;
+
+    /**
      * 高亮服务
      */
     private HighLightService highLightService;
@@ -135,7 +152,30 @@ public class CaseReplayManager implements ExportService {
      */
     private InjectorService injectorService;
 
-    private ExecutorService runningExecutor;
+    /**
+     * 用例运行器
+     */
+    private final ThreadPoolExecutor runningExecutor = new ThreadPoolExecutor(2, 2, 0L,
+            TimeUnit.MILLISECONDS, new LinkedBlockingQueue<Runnable>(), new ThreadFactory() {
+        private final AtomicInteger RUNNING_COUNTER = new AtomicInteger(1);
+        @Override
+        public Thread newThread(@NonNull Runnable r) {
+            String name = String.format(Locale.CHINA, "CaseReplayThread-%d", RUNNING_COUNTER.getAndIncrement());
+            return new Thread(r, name);
+        }
+    });
+
+    /**
+     * Daemon 执行器
+     */
+    private final ScheduledExecutorService daemonExecutor = Executors.newScheduledThreadPool(2, new ThreadFactory() {
+        private final AtomicInteger DAEMON_COUNTER = new AtomicInteger(1);
+        @Override
+        public Thread newThread(@NonNull Runnable r) {
+            String name = String.format(Locale.CHINA, "CaseReplayThread-%d", DAEMON_COUNTER.getAndIncrement());
+            return new Thread(r, name);
+        }
+    });
 
     /**
      * 目标应用
@@ -164,7 +204,7 @@ public class CaseReplayManager implements ExportService {
             if (provider.canStart()) {
                 startProcess();
             } else {
-                Toast.makeText(binder.loadServiceContext(), "无法手动启动", Toast.LENGTH_SHORT).show();
+                LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.replay__not_start_by_hand));
             }
             return 0;
         }
@@ -179,19 +219,27 @@ public class CaseReplayManager implements ExportService {
         }
     };
 
+    private int stepCount = 0;
+
+    private String defaultIme = null;
+
+    private CaseReplayStatus currentStatus = CaseReplayStatus.NONE;
+
     public void onCreate(Context context) {
         LauncherApplication app = LauncherApplication.getInstance();
         operationService = app.findServiceByName(OperationService.class.getName());
         injectorService = app.findServiceByName(InjectorService.class.getName());
         injectorService.register(this);
-        runningExecutor = Executors.newSingleThreadExecutor();
         eventService = app.findServiceByName(EventService.class.getName());
         highLightService = app.findServiceByName(HighLightService.class.getName());
+        touchService = app.findServiceByName(TouchService.class.getName());
 
         // 截图服务
         captureService = app.findServiceByName(ScreenCaptureService.class.getName());
 
         windowManager = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
+
+        operationService.startExtraActionHandle();
     }
 
     /**
@@ -206,15 +254,12 @@ public class CaseReplayManager implements ExportService {
         this.provider = provider;
         this.finishListener = finishListener;
 
-        BackgroundExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                boolean result = PrepareUtil.doPrepareWork(app);
-                if (result) {
-                    AppUtil.forceStopApp(app);
-                }
-            }
-        });
+        AppUtil.forceStopApp(app);
+
+        // 初始化运行参数
+        stepCount = 0;
+        defaultIme = null;
+        currentStatus = CaseReplayStatus.BEFORE_PREPARE;
 
         List<Class<? extends AbstractNodeProcessor>> processors = new ArrayList<>();
         processors.add(AccessibilityNodeProcessor.class);
@@ -229,6 +274,24 @@ public class CaseReplayManager implements ExportService {
         watcher = new ContentChangeWatcher();
         watcher.start();
         eventService.startTrackAccessibilityEvent();
+        if (touchService != null) {
+            touchService.start();
+        }
+
+        // 如果是自动启动
+        if (provider.canStart() && SPService.getBoolean(SPService.KEY_REPLAY_AUTO_START, false)) {
+            // 等待初始化完毕
+            LauncherApplication.getInstance().runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (binder == null) {
+                        LauncherApplication.getInstance().runOnUiThread(this, 500);
+                    } else {
+                        startProcess();
+                    }
+                }
+            }, 2000);
+        }
     }
 
     /**
@@ -249,6 +312,8 @@ public class CaseReplayManager implements ExportService {
             binder = null;
         }
 
+        operationService.stopExtraActionHandle();
+
         runningExecutor.shutdownNow();
         LauncherApplication.getInstance().stopServiceByName(HighLightService.class.getName());
     }
@@ -261,7 +326,7 @@ public class CaseReplayManager implements ExportService {
         binder.hideFloat();
 
         runningFlag = true;
-        runningExecutor.execute(new Runnable() {
+        final Runnable runningR = new Runnable() {
             @Override
             public void run() {
                 try {
@@ -270,78 +335,209 @@ public class CaseReplayManager implements ExportService {
                     LogUtil.e(TAG, "抛出异常" + e.getMessage(), e);
                 }
             }
-        });
+        };
+        // 启动执行器
+        runningExecutor.execute(runningR);
+
+        // 守护线程，10s检查一次状态
+        daemonExecutor.schedule(new Runnable() {
+            @Override
+            public void run() {
+                // 执行完毕，停止守护线程
+                if (currentStatus == CaseReplayStatus.STOP) {
+                    daemonExecutor.shutdownNow();
+                    return;
+                }
+
+                // 没执行完毕，并且没有正在处理的线程
+                int count = runningExecutor.getActiveCount();
+                if (count == 0) {
+                    runningExecutor.execute(runningR);
+                }
+            }
+        }, 10, TimeUnit.SECONDS);
     }
 
     /**
-     * 具体执行
+     * 具体执行（可重入）
      */
-    private void process() {
+    private synchronized void process() {
         if (provider == null) {
             LogUtil.e(TAG, "provider为空");
             return;
         }
 
+        if (currentStatus == CaseReplayStatus.NONE) {
+            LogUtil.w(TAG, "未准备，无法执行");
+            return;
+        }
+
+        if (currentStatus == CaseReplayStatus.BEFORE_PREPARE) {
+            prepareAction();
+            currentStatus = CaseReplayStatus.PREPARED;
+        }
+
+        if (currentStatus == CaseReplayStatus.PREPARED || currentStatus == CaseReplayStatus.RUNNING) {
+            InjectorService injectorService = InjectorService.g();
+            // 执行各步骤
+            while (runningFlag && provider.hasNext()) {
+                boolean shouldStop = stepAction(injectorService);
+                if (shouldStop) {
+                    break;
+                }
+            }
+
+            currentStatus = CaseReplayStatus.FINISH_RUNNING;
+        }
+
+        if (currentStatus == CaseReplayStatus.FINISH_RUNNING) {
+            suffixAction();
+            currentStatus = CaseReplayStatus.STOP;
+        }
+    }
+
+    /**
+     * 前置准备操作
+     */
+    private void prepareAction() {
         // 准备
         provider.prepare();
 
-        // 执行各步骤
-        while (provider.hasNext()) {
-            OperationStep step = null;
-            try {
-                step = provider.provideStep();
-            } catch (final Exception e) {
-                LogUtil.e(TAG, "Provide step throw exception: " + e.getMessage(), e);
-                // 强制终止
+        Context service = LauncherApplication.getInstance().loadRunningService();
+        final ProgressDialog progressDialog = DialogUtils.showProgressDialog(ContextUtil.getContextThemeWrapper(service, R.style.AppDialogTheme), "环境准备中");
+        PrepareUtil.PrepareStatus prepareStatus = new PrepareUtil.PrepareStatus() {
+            @Override
+            public void currentStatus(final int progress, final int total, final String message, boolean status) {
                 LauncherApplication.getInstance().runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        showDialog("解析异常", e.getClass() + ": " + e.getMessage(), binder.loadServiceContext(), 0);
+                        if (progressDialog == null || !progressDialog.isShowing()) {
+                            return;
+                        }
+
+                        // 更新progressDialog的状态
+                        progressDialog.setProgress(progress);
+                        progressDialog.setMax(total);
+                        progressDialog.setMessage(message);
                     }
                 });
-                break;
             }
+        };
+        PrepareUtil.doPrepareWork(app, prepareStatus);
 
-            // 说明特殊情况，执行完毕
-            if (step == null) {
-                break;
+        LauncherApplication.getInstance().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                progressDialog.dismiss();
             }
+        });
 
-            LogUtil.d(TAG, "开始执行操作：%s", step);
-            updateFloatIcon(R.drawable.solopi_running);
+        // 先记录下默认输入法
+        defaultIme = CmdTools.execHighPrivilegeCmd("settings get secure default_input_method");
+        MyApplication.getInstance().updateDefaultIme("com.alipay.hulu/.tools.AdbIME");
+        CmdTools.switchToIme("com.alipay.hulu/.tools.AdbIME");
 
-            String result;
-            try {
-                result = processOperation(step);
-            } catch (Exception e) {
-                LogUtil.e(TAG, "执行操作抛出异常: " + e.getMessage(), e);
-                result = "执行异常:" + e.getMessage();
-            }
+        // 初始化
+        stepCount = 1;
+    }
 
-            if (result != null) {
-                LogUtil.e(TAG, "执行步骤出现问题：%s", result);
-
-                boolean isError = provider.reportErrorStep(step, result);
-
-                if (StringUtil.equals(result, "回放中止")) {
-                    break;
-                }
-
-                // 如果是error步骤
-                if (isError) {
-                    break;
-                }
-            }
-
-            // 更新到原始图标
-            updateFloatIcon(R.drawable.solopi_float);
-            MiscUtil.sleep(200);
+    /**
+     * 单步操作
+     * @return 是否执行完毕
+     */
+    private boolean stepAction(InjectorService injector) {
+        OperationStep step = null;
+        try {
+            step = provider.provideStep();
+        } catch (Throwable t) {
+            LogUtil.e(TAG, "Load Step failed", t);
+        }
+        // 说明特殊情况，执行完毕
+        if (step == null) {
+            return true;
         }
 
+        LogUtil.i(TAG, "开始执行操作：%s", step);
+        updateFloatIcon(R.drawable.solopi_running);
+
+        String result;
+        try {
+            result = processOperation(step);
+        } catch (Exception e) {
+            LogUtil.e(TAG, "执行操作抛出异常: " + e.getMessage(), e);
+            result = "执行异常:" + e.getMessage();
+        }
+
+        // 是否阻塞执行
+        boolean isError = result != null;
+        if (isError) {
+            LogUtil.e(TAG, "执行步骤出现问题：%s", result);
+            isError = provider.reportErrorStep(step, result, new ArrayList<String>());
+        }
+
+        // 有需要监听执行结果的监听器
+        if (injector.getReferenceCount(REPLAY_STEP_FINISH_EVENT) > 0) {
+            OperationStepResult replayResult = new OperationStepResult();
+            replayResult.method = step.getOperationMethod().getActionEnum().getCode();
+            replayResult.error = result;
+            replayResult.result = !isError;
+            File captureFile = new File(FileUtils.getSubDir("tmp"), "step_" + stepCount + ".jpg");
+
+            // 截图信息
+            if (captureService != null) {
+                Bitmap captureResult = capture(captureFile);
+                if (captureResult != null) {
+                    replayResult.screenCaptureFile = captureFile;
+                }
+            }
+
+            injector.pushMessage(REPLAY_STEP_FINISH_EVENT, replayResult);
+        }
+
+        // 如果是error步骤
+        if (StringUtil.equals(result, "回放终止") || isError) {
+            return true;
+        }
+
+        // 更新到原始图标
+        updateFloatIcon(R.drawable.solopi_float);
+
+        MiscUtil.sleep(200);
+        return false;
+    }
+
+    /**
+     * 后置操作
+     */
+    private void suffixAction() {
         watcher.sleepUntilContentDontChange();
+        if (touchService != null) {
+            touchService.stop();
+        }
+
+        // 删除临时图片
+        File targetDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
+        targetDir = new File(targetDir, "solopi");
+        if (targetDir.exists()) {
+            FileUtils.deleteFile(targetDir);
+        }
+
+        // 切换回默认输入法
+        MyApplication.getInstance().updateDefaultIme(defaultIme);
+        CmdTools.switchToIme(defaultIme);
 
         // 汇报结果
         final List<ReplayResultBean> resultBeans = provider.genReplayResult();
+        if (resultBeans != null && resultBeans.size() > 0) {
+            DeviceInfo deviceInfo = DeviceInfoUtil.generateDeviceInfo();
+            for (ReplayResultBean result: resultBeans) {
+                result.setDeviceInfo(deviceInfo);
+                result.setPlatform("Android");
+                result.setPlatformVersion(deviceInfo.getSystemVersion());
+            }
+        }
+
+
         // 先restore再stop
         binder.restoreFloat();
         binder.stopFloat();
@@ -355,6 +551,28 @@ public class CaseReplayManager implements ExportService {
 
     public void stopRunning() {
         this.runningFlag = false;
+    }
+
+
+    /**
+     * 执行截图
+     * @param captureFile
+     * @return
+     */
+    private Bitmap capture(File captureFile) {
+        DisplayMetrics metrics = new DisplayMetrics();
+        windowManager.getDefaultDisplay().getRealMetrics(metrics);
+
+        int minEdge = Math.min(metrics.widthPixels, metrics.heightPixels);
+        float radio = SPService.getInt(SPService.KEY_SCREENSHOT_RESOLUTION, 720) / (float) minEdge;
+
+        // 无法放大
+        if (radio > 1) {
+            radio = 1;
+        }
+
+        return captureService.captureScreen(captureFile, metrics.widthPixels, metrics.heightPixels,
+                (int) (radio * metrics.widthPixels), (int) (radio * metrics.heightPixels));
     }
 
     /**
@@ -397,6 +615,8 @@ public class CaseReplayManager implements ExportService {
 
         // 对于需要操作节点的记录
         if (operation.getOperationNode() != null) {
+            // 解析Node数据
+            OperationNode origin = new OperationNode(operation.getOperationNode(), operationService);
             if (operation.getOperationMethod().getActionEnum() != PerformActionEnum.CLICK_QUICK) {
                 watcher.sleepUntilContentDontChange();
             } else {
@@ -407,17 +627,17 @@ public class CaseReplayManager implements ExportService {
 
             AbstractNodeTree node = null;
             if (operation.getOperationMethod().getActionEnum() == PerformActionEnum.CLICK_IF_EXISTS) {
-                node = OperationUtil.findAbstractNodeWithoutScroll(operation.getOperationNode(), operationService, prepareActions);
+                node = OperationUtil.findAbstractNodeWithoutScroll(origin, operationService, prepareActions);
 
                 if (node == null) {
-                    LogUtil.d(TAG, "未查找到节点【%s】，不进行操作", operation.getOperationNode());
+                    LogUtil.i(TAG, "未查找到节点【%s】，不进行操作", origin);
                     return null;
                 }
             } else if (operation.getOperationMethod().getActionEnum() == PerformActionEnum.CHECK_NODE) {
-                node = OperationUtil.findAbstractNodeWithoutScroll(operation.getOperationNode(), operationService, prepareActions);
+                node = OperationUtil.findAbstractNodeWithoutScroll(origin, operationService, prepareActions);
 
                 if (node == null) {
-                    LogUtil.i(TAG, "未查找到节点【%s】，不进行操作", operation.getOperationNode());
+                    LogUtil.i(TAG, "未查找到节点【%s】，不进行操作", origin);
                     return "节点未查找到";
                 }
             } else if (operation.getOperationMethod().getActionEnum() == PerformActionEnum.SLEEP_UNTIL) {
@@ -428,7 +648,7 @@ public class CaseReplayManager implements ExportService {
 
                     long start = System.currentTimeMillis();
                     while ((System.currentTimeMillis() - start) < time) {
-                        node = OperationUtil.scrollToScreen(operation.getOperationNode(), operationService);
+                        node = OperationUtil.scrollToScreen(origin, operationService);
 
                         // 如果找到了，直接break
                         if (node != null) {
@@ -442,7 +662,7 @@ public class CaseReplayManager implements ExportService {
 
                     // 没找到
                     if (node == null) {
-                        LogUtil.w(TAG, "未查找到节点【%s】", operation.getOperationNode());
+                        LogUtil.w(TAG, "未查找到节点【%s】", origin);
                         return "节点未查找到";
                     }
                 } catch (NumberFormatException e) {
@@ -450,9 +670,9 @@ public class CaseReplayManager implements ExportService {
                     return "参数错误";
                 }
             } else {
-                node = OperationUtil.findAbstractNode(operation.getOperationNode(), operationService, prepareActions);
+                node = OperationUtil.findAbstractNode(origin, operationService, prepareActions);
                 if (node == null) {
-                    LogUtil.w(TAG, "未查找到节点【%s】，无法进行操作", operation.getOperationNode());
+                    LogUtil.w(TAG, "未查找到节点【%s】，无法进行操作", origin);
                     return "节点未查找到";
                 }
             }
@@ -484,7 +704,7 @@ public class CaseReplayManager implements ExportService {
                             capture.getHeight());
 
                     Bitmap crop = Bitmap.createBitmap(capture, scaledRect.left,
-                           scaledRect.top, scaledRect.width(),
+                            scaledRect.top, scaledRect.width(),
                             scaledRect.height());
 
                     String content = BitmapUtil.bitmapToBase64(crop);
@@ -511,7 +731,7 @@ public class CaseReplayManager implements ExportService {
                 return "执行失败";
             }
 
-            OperationNode opNode = OperationStepProvider.exportNodeToOperationNode(node);
+            OperationNode opNode = OperationStepExporter.exportNodeToOperationNode(node);
 
             // 等待操作结束
             try {
@@ -522,7 +742,7 @@ public class CaseReplayManager implements ExportService {
 
             // 输入操作会较耗时，需要等待下
             if (method.getActionEnum() == PerformActionEnum.INPUT || method.getActionEnum() == PerformActionEnum.INPUT_SEARCH) {
-                MiscUtil.sleep(3000);
+                MiscUtil.sleep(1000);
                 watcher.sleepUntilContentDontChange();
             }
 
@@ -539,12 +759,21 @@ public class CaseReplayManager implements ExportService {
                 return "执行失败";
             }
 
-            // 成功执行，需要等待
+            // 成功执行，需要等待10分钟
             // 等待操作结束
-            try {
-                runningFlag.await(600 * 100, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                LogUtil.e(TAG, "Catch java.lang.InterruptedException: " + e.getMessage(), e);
+            if (operation.getOperationMethod().getActionEnum() != PerformActionEnum.SLEEP) {
+                try {
+                    runningFlag.await(600, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    LogUtil.e(TAG, "Catch java.lang.InterruptedException: " + e.getMessage(), e);
+                }
+            } else {
+                // SLEEP特殊处理，等待1小时
+                try {
+                    runningFlag.await(60, TimeUnit.MINUTES);
+                } catch (InterruptedException e) {
+                    LogUtil.e(TAG, "Catch java.lang.InterruptedException: " + e.getMessage(), e);
+                }
             }
         }
         LogUtil.d(TAG, "操作执行完毕");
@@ -608,14 +837,14 @@ public class CaseReplayManager implements ExportService {
     public void receiveDeviceInfoMessage(UIOperationMessage message) {
         if (message.eventType == UIOperationMessage.TYPE_DEVICE_INFO) {
             DeviceInfo info = DeviceInfoUtil.generateDeviceInfo();
-            showDialog("设备信息", info.toString(), binder.loadServiceContext(), 0);
+            showDialog(StringUtil.getString(R.string.ui__device_info), info.toString(), binder.loadServiceContext(), 0);
         } else if (message.eventType == UIOperationMessage.TYPE_DIALOG) {
             String info = message.getParam("msg");
             String title = message.getParam("title");
             showDialog(title, info, binder.loadServiceContext(), 0);
         } else if (message.eventType == UIOperationMessage.TYPE_COUNT_DOWN) {
             long timeMillis = message.getParam("time");
-            showDialog("SLEEP", "等待" + timeMillis + "ms", binder.loadServiceContext(), timeMillis);
+            showDialog(StringUtil.getString(R.string.ui__sleep), StringUtil.getString(R.string.ui__sleep_time, timeMillis), binder.loadServiceContext(), timeMillis);
         } else if (message.eventType == UIOperationMessage.TYPE_DISMISS) {
             // 隐藏掉原来的Dialog
             if (dialogRef != null && dialogRef.get() != null && dialogRef.get().isShowing()) {
@@ -658,13 +887,13 @@ public class CaseReplayManager implements ExportService {
             final AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
                     .setTitle(title)
                     .setView(v)
-                    .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                    .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             dialog.dismiss();
                         }
                     }).create();
-            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+            dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
             dialog.setCanceledOnTouchOutside(false);
             dialog.setCancelable(false);
             dialog.show();
@@ -729,5 +958,17 @@ public class CaseReplayManager implements ExportService {
 
     public interface OnFinishListener {
         void onFinish(List<ReplayResultBean> resultBeans, Context context);
+    }
+
+    /**
+     * 运行状态
+     */
+    private enum CaseReplayStatus {
+        NONE,
+        BEFORE_PREPARE,
+        PREPARED,
+        RUNNING,
+        FINISH_RUNNING,
+        STOP,
     }
 }

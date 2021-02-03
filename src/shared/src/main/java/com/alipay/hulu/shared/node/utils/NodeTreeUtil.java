@@ -20,6 +20,7 @@ import android.widget.Toast;
 import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.StringUtil;
+import com.alipay.hulu.shared.R;
 import com.alipay.hulu.shared.node.action.Constant;
 import com.alipay.hulu.shared.node.action.OperationExecutor;
 import com.alipay.hulu.shared.node.action.OperationMethod;
@@ -94,6 +95,16 @@ public class NodeTreeUtil {
         }
 
         String matchTxt = matchTxtBuilder.toString();
+        return assertText(matchTxt, method);
+    }
+
+    /**
+     *
+     * @param matchTxt
+     * @param method
+     * @return
+     */
+    public static boolean assertText(String matchTxt, OperationMethod method) {
         method.putParam(OperationExecutor.ASSERT_CONTENT, matchTxt);
         String mode = method.getParam(OperationExecutor.ASSERT_MODE);
         String inputContent = method.getParam(OperationExecutor.ASSERT_INPUT_CONTENT);
@@ -101,31 +112,31 @@ public class NodeTreeUtil {
         LogUtil.i(TAG, "current node text: %s, assert mode: %s, target text: %s",
                 matchTxt, mode, inputContent);
 
-        String content = "";
+        Integer content = null;
 
         if (Constant.ASSERT_ACCURATE.equals(mode)) {
             if (matchTxt.equals(inputContent)) {
                 LogUtil.w(ASSERT, "success");
-                content = "断言成功";
+                content = R.string.node__assert_success;
             } else {
                 LogUtil.e(ASSERT, "fail");
-                content = "断言失败";
+                content = R.string.node__assert_fail;
             }
         } else if (Constant.ASSERT_CONTAIN.equals(mode)) {
             if (matchTxt.contains(inputContent)) {
                 LogUtil.w(ASSERT, "success");
-                content = "断言成功";
+                content = R.string.node__assert_success;
             } else {
                 LogUtil.e(ASSERT, "fail");
-                content = "断言失败";
+                content = R.string.node__assert_fail;
             }
         } else if (Constant.ASSERT_REGULAR.equals(mode)) {
             if (matchTxt.matches(inputContent)) {
                 LogUtil.w(ASSERT, "success");
-                content = "断言成功";
+                content = R.string.node__assert_success;
             } else {
                 LogUtil.e(ASSERT, "fail");
-                content = "断言失败";
+                content = R.string.node__assert_fail;
             }
         } else if (Constant.ASSERT_DAYU.equals(mode)) {
             try {
@@ -133,10 +144,10 @@ public class NodeTreeUtil {
                 float inputValue = Float.valueOf(inputContent);
                 if (curValue > inputValue) {
                     LogUtil.w(ASSERT, "success");
-                    content = "断言成功";
+                    content = R.string.node__assert_success;
                 } else {
                     LogUtil.e(ASSERT, "fail");
-                    content = "断言失败";
+                    content = R.string.node__assert_fail;
                 }
             } catch (Exception e) {
                 LogUtil.e(ASSERT, "number format exception");
@@ -147,10 +158,10 @@ public class NodeTreeUtil {
                 float inputValue = Float.valueOf(inputContent);
                 if (curValue >= inputValue) {
                     LogUtil.w(ASSERT, "success");
-                    content = "断言成功";
+                    content = R.string.node__assert_success;
                 } else {
                     LogUtil.e(ASSERT, "fail");
-                    content = "断言失败";
+                    content = R.string.node__assert_fail;
                 }
             } catch (Exception e) {
                 LogUtil.e(ASSERT, "number format exception");
@@ -161,10 +172,10 @@ public class NodeTreeUtil {
                 float inputValue = Float.valueOf(inputContent);
                 if (Math.abs(curValue - inputValue) <= 0.001) {
                     LogUtil.w(ASSERT, "success");
-                    content = "断言成功";
+                    content = R.string.node__assert_success;
                 } else {
                     LogUtil.e(ASSERT, "fail");
-                    content = "断言失败";
+                    content = R.string.node__assert_fail;
                 }
             } catch (Exception e) {
                 LogUtil.e(ASSERT, "number format exception");
@@ -175,10 +186,10 @@ public class NodeTreeUtil {
                 float inputValue = Float.valueOf(inputContent);
                 if (curValue < inputValue) {
                     LogUtil.w(ASSERT, "success");
-                    content = "断言成功";
+                    content = R.string.node__assert_success;
                 } else {
                     LogUtil.e(ASSERT, "fail");
-                    content = "断言失败";
+                    content = R.string.node__assert_fail;
                 }
             } catch (Exception e) {
                 LogUtil.e(ASSERT, "number format exception");
@@ -189,10 +200,10 @@ public class NodeTreeUtil {
                 float inputValue = Float.valueOf(inputContent);
                 if (curValue <= inputValue) {
                     LogUtil.w(ASSERT, "success");
-                    content = "断言成功";
+                    content = R.string.node__assert_success;
                 } else {
                     LogUtil.e(ASSERT, "fail");
-                    content = "断言失败";
+                    content = R.string.node__assert_fail;
                 }
             } catch (Exception e) {
                 LogUtil.e(ASSERT, "number format exception");
@@ -200,16 +211,10 @@ public class NodeTreeUtil {
         }
 
         // 如果有需要Toast的信息，在主线程上进行toast
-        if (!StringUtil.isEmpty(content)) {
-            final String toToast = content;
-            LauncherApplication.getInstance().runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    Toast.makeText(LauncherApplication.getInstance(), toToast, Toast.LENGTH_SHORT).show();
-                }
-            });
+        if (content != null) {
+            LauncherApplication.toast(content);
         }
 
-        return StringUtil.equals(content, "断言成功");
+        return content != null && content == R.string.node__assert_success;
     }
 }

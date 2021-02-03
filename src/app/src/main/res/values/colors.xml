@@ -29,8 +29,10 @@
     <color name="mix_gray">#CECED2</color>
     <color name="colorPrimary">#03A9F4</color>
     <color name="colorPrimaryDark">#0288D1</color>
+    <color name="colorPrimarySecond">#43B9F6</color>
     <color name="colorPrimaryLight">#B3E5FC</color>
     <color name="colorAccent">#FF4081</color>
+    <color name="colorAccentSecond">#FF6096</color>
     <color name="colorAccentTransparent">#aaFF4081</color>
     <color name="orangered">#FF4500</color>
     <color name="bkg_light">#F5F5F5</color>
@@ -67,6 +69,9 @@
     <color name = "colorStatusYellow" >#f9b022</color >
     <color name = "colorStatusRed" >#ff4b2d</color >
     <color name = "colorStatusGay" >#54b3e4</color >
+
+    <color name="lightYellow">#FBFFEA</color>
+    <color name="lineColor">#979797</color>
 
     <color name="divideBgColor">#c9c9c9</color> <!-- 分割线的背景色, 中灰 -->
     <color name="item_pressed">#D8D8D8</color> <!-- listview中item的按下效果, 中灰 -->

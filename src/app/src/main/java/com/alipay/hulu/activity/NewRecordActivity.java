@@ -18,11 +18,10 @@ package com.alipay.hulu.activity;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
-import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.support.annotation.Nullable;
-import android.support.v4.widget.DrawerLayout;
+import androidx.annotation.Nullable;
+import androidx.drawerlayout.widget.DrawerLayout;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -33,7 +32,6 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.alibaba.fastjson.JSON;
 import com.alipay.hulu.R;
@@ -46,7 +44,6 @@ import com.alipay.hulu.common.injector.InjectorService;
 import com.alipay.hulu.common.injector.param.SubscribeParamEnum;
 import com.alipay.hulu.common.injector.param.Subscriber;
 import com.alipay.hulu.common.injector.provider.Param;
-import com.alipay.hulu.common.service.SPService;
 import com.alipay.hulu.common.tools.BackgroundExecutor;
 import com.alipay.hulu.common.utils.ContextUtil;
 import com.alipay.hulu.common.utils.GlideUtil;
@@ -54,22 +51,20 @@ import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.MiscUtil;
 import com.alipay.hulu.common.utils.PermissionUtil;
 import com.alipay.hulu.common.utils.StringUtil;
-import com.alipay.hulu.event.RecordCaseChangedEvent;
 import com.alipay.hulu.replay.OperationStepProvider;
 import com.alipay.hulu.service.CaseRecordManager;
 import com.alipay.hulu.service.CaseReplayManager;
+import com.alipay.hulu.shared.io.OperationStepService;
 import com.alipay.hulu.shared.io.bean.RecordCaseInfo;
 import com.alipay.hulu.shared.io.db.GreenDaoManager;
+import com.alipay.hulu.shared.io.db.OperationLogHandler;
 import com.alipay.hulu.shared.io.db.RecordCaseInfoDao;
 import com.alipay.hulu.shared.node.action.RunningModeEnum;
 import com.alipay.hulu.shared.node.utils.AppUtil;
 import com.alipay.hulu.shared.node.utils.PrepareUtil;
 import com.alipay.hulu.ui.HeadControlPanel;
+import com.alipay.hulu.util.CaseReplayUtil;
 import com.alipay.hulu.util.SystemUtil;
-
-import org.greenrobot.eventbus.EventBus;
-import org.greenrobot.eventbus.Subscribe;
-import org.greenrobot.eventbus.ThreadMode;
 
 import java.util.Arrays;
 import java.util.List;
@@ -77,13 +72,13 @@ import java.util.List;
 /**
  * Created by lezhou.wyl on 2018/2/1.
  */
-@EntryActivity(icon = R.drawable.icon_luxiang, name = "录制回放", permissions = {"adb", "float", "toast:请将Soloπ添加到后台白名单中"}, index = 1, cornerText = "图像", cornerPersist = 3, cornerBg = 0xFFFF5900)
+@EntryActivity(iconName = "com.alipay.hulu.R$drawable.icon_luxiang", nameResName = "com.alipay.hulu.R$string.activity__record", permissions = {"adb", "float", "background", "toast:${com.alipay.hulu.R$string.toast_message__add_solopi_background}"}, index = 1, cornerText = "New", cornerPersist = 3, cornerBg = 0xFFFF5900)
 public class NewRecordActivity extends BaseActivity {
 
     private static final String TAG = NewRecordActivity.class.getSimpleName();
     public static final String NEED_REFRESH_PAGE = "NEED_REFRESH_PAGE";
 
-    public static final String NEED_REFRESH_CASES_LIST = "NEED_REFRESH_CASES_LIST";
+    public static final String NEED_REFRESH_LOCAL_CASES_LIST = "NEED_REFRESH_LOCAL_CASES_LIST";
 
     private DrawerLayout mDrawerLayout;
 
@@ -116,7 +111,7 @@ public class NewRecordActivity extends BaseActivity {
         this.app = app;
     }
 
-    @Subscriber(@Param(value = NEED_REFRESH_CASES_LIST, sticky = false))
+    @Subscriber(@Param(value = NEED_REFRESH_LOCAL_CASES_LIST, sticky = false))
     public void notifyCaseListChange() {
         if (!isDestroyed()) {
             getRecentCaseList();
@@ -126,11 +121,9 @@ public class NewRecordActivity extends BaseActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        InjectorService injectorService = LauncherApplication.getInstance().findServiceByName(InjectorService.class.getName());
-        injectorService.register(this);
-
-        EventBus.getDefault().register(this);
         setContentView(R.layout.activity_record_new);
+        InjectorService.g().register(this);
+
         initDrawerLayout();
         initAppList();
         initHeadPanel();
@@ -158,23 +151,15 @@ public class NewRecordActivity extends BaseActivity {
 
 
     private void initRecentCaseLayout() {
-        mRecentCaseListView = (ListView) findViewById(R.id.recent_case_list);
+        mRecentCaseListView = findViewById(R.id.recent_case_list);
         mEmptyView = findViewById(R.id.empty_hint);
         mCheckAllCasesBtn = findViewById(R.id.check_all_cases);
         mRecentCaseAdapter = new ReplayListAdapter(this);
-        mRecentCaseAdapter.setOnEditClickListener(new AdapterView.OnItemClickListener() {
+        mRecentCaseAdapter.setOnPlayClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 RecordCaseInfo caseInfo = (RecordCaseInfo) mRecentCaseAdapter.getItem(position);
-                if (caseInfo == null) {
-                    return;
-                }
-
-                // 启动编辑页
-                Intent intent = new Intent(NewRecordActivity.this, CaseEditActivity.class);
-                int storeId = CaseStepHolder.storeCase(caseInfo);
-                intent.putExtra(CaseEditActivity.RECORD_CASE_EXTRA, storeId);
-                startActivity(intent);
+                playCase(caseInfo);
             }
         });
         mRecentCaseListView.setAdapter(mRecentCaseAdapter);
@@ -189,61 +174,85 @@ public class NewRecordActivity extends BaseActivity {
         mRecentCaseListView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                final RecordCaseInfo caseInfo = (RecordCaseInfo) mRecentCaseAdapter.getItem(position);
-                if (caseInfo == null) {
-                    return;
-                }
-
-                // 检查权限
-                PermissionUtil.requestPermissions(Arrays.asList("adb", Settings.ACTION_ACCESSIBILITY_SETTINGS), NewRecordActivity.this, new PermissionUtil.OnPermissionCallback() {
-                    @Override
-                    public void onPermissionResult(boolean result, String reason) {
-                        if (result) {
-
-                            showProgressDialog("正在加载中");
-
-                            BackgroundExecutor.execute(new Runnable() {
-                                @Override
-                                public void run() {
-                                    boolean prepareResult = PrepareUtil.doPrepareWork(caseInfo.getTargetAppPackage(), new PrepareUtil.PrepareStatus() {
-                                        @Override
-                                        public void currentStatus(int progress, int total, String message, boolean status) {
-                                            updateProgressDialog(progress, total, message);
-                                        }
-                                    });
-
-                                    if (prepareResult) {
-                                        runOnUiThread(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                dismissProgressDialog();
-                                                startReplay(caseInfo);
-                                                startTargetApp(caseInfo.getTargetAppPackage());
-                                            }
-                                        });
-                                    } else {
-                                        runOnUiThread(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                dismissProgressDialog();
-                                                Toast.makeText(NewRecordActivity.this, "环境准备失败", Toast.LENGTH_SHORT).show();
-                                            }
-                                        });
-                                    }
-                                }
-                            });
-                        }
-                    }
-                });
+                RecordCaseInfo caseInfo = (RecordCaseInfo) mRecentCaseAdapter.getItem(position);
+                editCase(caseInfo);
             }
         });
 
 
     }
 
+    /**
+     * 编辑用例
+     * @param caseInfo
+     */
+    private void editCase(RecordCaseInfo caseInfo) {
+        if (caseInfo == null) {
+            return;
+        }
+
+        caseInfo = caseInfo.clone();
+
+        // 启动编辑页
+        Intent intent = new Intent(NewRecordActivity.this, CaseEditActivity.class);
+        int storeId = CaseStepHolder.storeCase(caseInfo);
+        intent.putExtra(CaseEditActivity.RECORD_CASE_EXTRA, storeId);
+        startActivity(intent);
+    }
+
+    /**
+     * 执行用例
+     * @param caseInfo
+     */
+    private void playCase(final RecordCaseInfo caseInfo) {
+        if (caseInfo == null) {
+            return;
+        }
+// 检查权限
+        PermissionUtil.requestPermissions(Arrays.asList("adb", Settings.ACTION_ACCESSIBILITY_SETTINGS), NewRecordActivity.this, new PermissionUtil.OnPermissionCallback() {
+            @Override
+            public void onPermissionResult(boolean result, String reason) {
+                if (result) {
+                    showProgressDialog(getString(R.string.record__preparing));
+                    BackgroundExecutor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            boolean prepareResult = PrepareUtil.doPrepareWork(caseInfo.getTargetAppPackage(), new PrepareUtil.PrepareStatus() {
+                                @Override
+                                public void currentStatus(int progress, int total, String message, boolean status) {
+                                    updateProgressDialog(progress, total, message);
+                                }
+                            });
+
+                            if (prepareResult) {
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        dismissProgressDialog();
+                                        CaseReplayUtil.startReplay(caseInfo);
+//                                        startTargetApp(caseInfo.getTargetAppPackage());
+                                    }
+                                });
+                            } else {
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        dismissProgressDialog();
+                                        toastShort(getString(R.string.record__prepare_env_fail));
+                                    }
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+        });
+
+    }
+
     private void initHeadPanel() {
         mPanel = (HeadControlPanel) findViewById(R.id.head_layout);
-        mPanel.setMiddleTitle("录制回放");
+        mPanel.setMiddleTitle(getString(R.string.activity__record));
         mPanel.setBackIconClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -350,7 +359,7 @@ public class NewRecordActivity extends BaseActivity {
             @Override
             public void onClick(View v) {
                 if (StringUtil.isEmpty(mCaseName.getText().toString().trim())) {
-                    Toast.makeText(NewRecordActivity.this, "用例名不能为空", Toast.LENGTH_SHORT).show();
+                    toastShort(R.string.record__case_name_empty);
                     return;
                 }
 
@@ -383,8 +392,7 @@ public class NewRecordActivity extends BaseActivity {
                     @Override
                     public void onPermissionResult(boolean result, String reason) {
                         if (result) {
-
-                            showProgressDialog("正在加载中");
+                            showProgressDialog(getString(R.string.record__preparing));
 
                             BackgroundExecutor.execute(new Runnable() {
                                 @Override
@@ -401,6 +409,9 @@ public class NewRecordActivity extends BaseActivity {
                                             @Override
                                             public void run() {
                                                 dismissProgressDialog();
+
+                                                LauncherApplication.service(OperationStepService.class).registerStepProcessor(new OperationLogHandler());
+
                                                 startRecord(caseInfo);
                                                 startTargetApp(caseInfo.getTargetAppPackage());
                                             }
@@ -410,7 +421,7 @@ public class NewRecordActivity extends BaseActivity {
                                             @Override
                                             public void run() {
                                                 dismissProgressDialog();
-                                                Toast.makeText(NewRecordActivity.this, "环境准备失败", Toast.LENGTH_SHORT).show();
+                                                toastShort(R.string.record__prepare_failed);
                                             }
                                         });
                                     }
@@ -527,15 +538,7 @@ public class NewRecordActivity extends BaseActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        EventBus.getDefault().unregister(this);
-    }
-
-    @Subscribe(threadMode = ThreadMode.MAIN)
-    public void onRecordCaseChanged(RecordCaseChangedEvent event) {
-        if (event.getType() == RecordCaseChangedEvent.TYPE_CASE_ADD
-                || event.getType() == RecordCaseChangedEvent.TYPE_LOCAL_DELETE) {
-            getRecentCaseList();
-        }
+        InjectorService.g().unregister(this);
     }
 
     @Override

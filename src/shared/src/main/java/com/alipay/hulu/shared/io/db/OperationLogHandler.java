@@ -15,16 +15,19 @@
  */
 package com.alipay.hulu.shared.io.db;
 
-import android.os.Environment;
-import android.support.annotation.NonNull;
+import android.content.Context;
+import androidx.annotation.NonNull;
 import android.util.Pair;
 
 import com.alibaba.fastjson.JSON;
+import com.alipay.hulu.common.injector.InjectorService;
+import com.alipay.hulu.common.utils.LogUtil;
+import com.alipay.hulu.shared.io.OperationStepProcessor;
 import com.alipay.hulu.shared.io.bean.GeneralOperationLogBean;
 import com.alipay.hulu.shared.io.bean.RecordCaseInfo;
+import com.alipay.hulu.shared.io.util.OperationStepUtil;
 import com.alipay.hulu.shared.node.tree.export.bean.OperationStep;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -35,14 +38,18 @@ import java.util.concurrent.Executors;
 /**
  * 操作入库
  */
-public class OperationLogHandler {
+public class OperationLogHandler implements OperationStepProcessor {
+    /**
+     * notify update local cases
+     */
+    public static final String NEED_REFRESH_LOCAL_CASES_LIST = "NEED_REFRESH_LOCAL_CASES_LIST";
 
     private static final String TAG = "OperationLogHandler";
 
-    private RecordCaseInfo caseInfo;
+    protected RecordCaseInfo caseInfo;
 
-    private GeneralOperationLogBean generalOperation;
-    private PriorityQueue<Pair<Integer, OperationStep>> generalPriorityQueue;
+    protected GeneralOperationLogBean generalOperation;
+    protected PriorityQueue<Pair<Integer, OperationStep>> generalPriorityQueue;
 
     private ExecutorService dbOperationExecutor = Executors.newSingleThreadExecutor();
 
@@ -58,7 +65,8 @@ public class OperationLogHandler {
      * 开始录制
      * @param caseInfo
      */
-    public void startRecord(RecordCaseInfo caseInfo) {
+    @Override
+    public void onStartRecord(RecordCaseInfo caseInfo) {
         updateCase(caseInfo);
         generalOperation = new GeneralOperationLogBean();
         if (generalPriorityQueue == null) {
@@ -78,14 +86,16 @@ public class OperationLogHandler {
      * @param stepIdx
      * @param operation
      */
-    public void recordStep(int stepIdx, OperationStep operation) {
+    @Override
+    public void onOperationStep(int stepIdx, OperationStep operation) {
         generalPriorityQueue.add(new Pair<>(stepIdx, operation));
     }
 
     /**
      * 停止录制
      */
-    public void stopRecord() {
+    @Override
+    public boolean onStopRecord(Context context) {
         List<OperationStep> realList = new ArrayList<>(generalPriorityQueue.size());
         while (!generalPriorityQueue.isEmpty()) {
             realList.add(generalPriorityQueue.poll().second);
@@ -94,12 +104,18 @@ public class OperationLogHandler {
 
         // 仅当录制步骤数超过0才会入库
         if (realList.size() > 0) {
+            // store step to file
+            OperationStepUtil.beforeStore(generalOperation);
+
             String jsonString = JSON.toJSONString(generalOperation);
             caseInfo.setOperationLog(jsonString);
-
             saveCaseInDB();
         }
+
+        return false;
     }
+
+
 
     private void saveCaseInDB() {
         if (caseInfo != null) {
@@ -108,14 +124,14 @@ public class OperationLogHandler {
                 public void run() {
                     caseInfo.setGmtCreate(System.currentTimeMillis());
                     caseInfo.setGmtModify(System.currentTimeMillis());
-                    GreenDaoManager.getInstance().getRecordCaseInfoDao().insert(caseInfo);
+                    long newId = GreenDaoManager.getInstance().getRecordCaseInfoDao().insert(caseInfo);
+
+                    LogUtil.i(TAG, "Save case with id %d", newId);
+
+                    // update case list
+                    InjectorService.g().pushMessage(NEED_REFRESH_LOCAL_CASES_LIST);
                 }
             });
         }
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-        super.finalize();
     }
 }

@@ -15,6 +15,7 @@
  */
 package com.alipay.hulu.activity;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -22,11 +23,13 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.annotation.Nullable;
-import android.support.v4.content.FileProvider;
+import androidx.annotation.Nullable;
+import androidx.core.content.FileProvider;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import android.widget.BaseAdapter;
 import android.widget.GridView;
 import android.widget.ImageView;
@@ -36,25 +39,34 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.alipay.hulu.R;
 import com.alipay.hulu.activity.entry.EntryActivity;
+import com.alipay.hulu.bean.GithubReleaseBean;
 import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.constant.Constant;
 import com.alipay.hulu.common.service.SPService;
 import com.alipay.hulu.common.tools.BackgroundExecutor;
+import com.alipay.hulu.common.tools.CmdTools;
 import com.alipay.hulu.common.utils.ClassUtil;
-import com.alipay.hulu.common.utils.DeviceInfoUtil;
+import com.alipay.hulu.common.utils.ContextUtil;
 import com.alipay.hulu.common.utils.FileUtils;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.PermissionUtil;
 import com.alipay.hulu.common.utils.StringUtil;
+import com.alipay.hulu.event.ScanSuccessEvent;
 import com.alipay.hulu.ui.ColorFilterRelativeLayout;
 import com.alipay.hulu.ui.HeadControlPanel;
 import com.alipay.hulu.upgrade.PatchRequest;
 import com.alipay.hulu.util.SystemUtil;
+import com.alipay.hulu.util.UpgradeUtil;
 import com.alipay.hulu.util.ZipUtil;
+
+import org.commonmark.node.Node;
+import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.HtmlRenderer;
 
 import java.io.File;
 import java.io.FileFilter;
 import java.io.FilenameFilter;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -72,7 +84,6 @@ import java.util.regex.Pattern;
 
 public class IndexActivity extends BaseActivity {
     private static final String TAG = IndexActivity.class.getSimpleName();
-    private static final String DISPLAY_ALERT_INFO = "displayAlertInfo";
 
     private HeadControlPanel mPanel;
     private GridView mGridView;
@@ -86,23 +97,74 @@ public class IndexActivity extends BaseActivity {
         initData();
         loadOthers();
 
-        // 免责弹窗
-        boolean showDisplay = SPService.getBoolean(DISPLAY_ALERT_INFO, true);
-        if (showDisplay) {
-            new AlertDialog.Builder(this).setTitle("免责声明")
-                    .setMessage(R.string.disclaimer)
-                    .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+        // check update
+        if (SPService.getBoolean(SPService.KEY_CHECK_UPDATE, true)) {
+            BackgroundExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    UpgradeUtil.checkForUpdate(new UpgradeUtil.CheckUpdateListener() {
                         @Override
-                        public void onClick(DialogInterface dialog, int which) {
-                            dialog.dismiss();
+                        public void onNoUpdate() {
+
                         }
-                    }).setNegativeButton("不再提示", new DialogInterface.OnClickListener() {
+
                         @Override
-                        public void onClick(DialogInterface dialog, int which) {
-                            SPService.putBoolean(DISPLAY_ALERT_INFO, false);
-                            dialog.dismiss();
+                        public void onNewUpdate(final GithubReleaseBean release) {
+                            Parser parser = Parser.builder().build();
+                            Node document = parser.parse(release.getBody());
+
+                            // text size 16dp
+                            int px = ContextUtil.dip2px(IndexActivity.this, 16);
+                            HtmlRenderer renderer = HtmlRenderer.builder().build();
+                            String css = "<html><header><style type=\"text/css\"> img {" +
+                                    "width:100%;" +
+                                    "height:auto;" +
+                                    "}" +
+                                    "body {" +
+                                    "margin-right:30px;" +
+                                    "margin-left:30px;" +
+                                    "margin-top:30px;" +
+                                    "font-size:" + px + "px;" +
+                                    "word-wrap:break-word;" +
+                                    "}" +
+                                    "</style></header>";
+                            final String content = css + renderer.render(document) + "</html>";
+
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    WebView webView = new WebView(IndexActivity.this);
+                                    WebSettings webSettings = webView.getSettings();
+                                    webSettings.setUseWideViewPort(true);
+                                    webSettings.setLoadWithOverviewMode(true);
+                                    webSettings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NARROW_COLUMNS);
+                                    webView.loadData(content, null, null);
+                                    new AlertDialog.Builder(IndexActivity.this).setTitle(getString(R.string.index__new_version, release.getTag_name()))
+                                            .setView(webView)
+                                            .setPositiveButton(R.string.index__go_update, new DialogInterface.OnClickListener() {
+
+                                                public void onClick(DialogInterface dialog, int which) {
+                                                    Uri uri = Uri.parse(release.getHtml_url());
+                                                    Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                                                    startActivity(intent);
+                                                }
+                                            }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
+                                        @Override
+                                        public void onClick(DialogInterface dialog, int which) {
+                                            dialog.dismiss();
+                                        }
+                                    }).show();
+                                }
+                            });
                         }
-                    }).show();
+
+                        @Override
+                        public void onUpdateFailed(Throwable t) {
+
+                        }
+                    });
+                }
+            });
         }
     }
 
@@ -150,6 +212,19 @@ public class IndexActivity extends BaseActivity {
                 return o1.index - o2.index;
             }
         });
+        mPanel.setLeftIconClickListener(R.drawable.icon_scan, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                PermissionUtil.requestPermissions(Collections.singletonList(Manifest.permission.CAMERA), IndexActivity.this, new PermissionUtil.OnPermissionCallback() {
+                    @Override
+                    public void onPermissionResult(boolean result, String reason) {
+                        Intent intent = new Intent(IndexActivity.this, QRScanActivity.class);
+                        intent.putExtra(QRScanActivity.KEY_SCAN_TYPE, ScanSuccessEvent.SCAN_TYPE_OTHER);
+                        startActivity(intent);
+                    }
+                });
+            }
+        });
 
         CustomAdapter adapter = new CustomAdapter(this, entries);
         if (entries.size() <= 3) {
@@ -160,18 +235,21 @@ public class IndexActivity extends BaseActivity {
         mGridView.setAdapter(adapter);
 
         // 有写权限，申请下
-        PatchRequest.updatePatchList();
+        PatchRequest.updatePatchList(null);
     }
 
     /**
      * 加载其他信息
      */
     private void loadOthers() {
-        // 检查是否需要上报故障日志
         BackgroundExecutor.execute(new Runnable() {
             @Override
             public void run() {
+                // 检查是否需要上报故障日志
                 checkErrorLog();
+
+                // 读取外部的ADB秘钥
+                readOuterAdbKey();
             }
         });
     }
@@ -198,12 +276,12 @@ public class IndexActivity extends BaseActivity {
                         // 只上传一条，根据修改时间查看
                         LauncherApplication.getInstance().showDialog(
                                 IndexActivity.this,
-                                getString(R.string.index__find_error_log), getString(R.string.constant__yes), new Runnable() {
+                                getString(R.string.index__find_error_log), getString(R.string.constant__sure), new Runnable() {
                                     @Override
                                     public void run() {
                                         reportError(time, errorLog);
                                     }
-                                }, "取消", null);
+                                }, getString(R.string.constant__cancel), null);
                         break;
                     }
                 }
@@ -275,13 +353,33 @@ public class IndexActivity extends BaseActivity {
                         }
                     });
                 } else {
-                    toastLong("日志打包失败");
+                    toastLong(getString(R.string.index__package_crash_failed));
 
                     // 回设检查时间，以便下次上报
                     SPService.putLong(SPService.KEY_ERROR_CHECK_TIME, errorTime - 10);
                 }
             }
         });
+    }
+
+    /**
+     * 读取外部ADB配置文件
+     */
+    private void readOuterAdbKey() {
+        File root = FileUtils.getSubDir("adb");
+        final File adbKey = new File(root, "adbkey");
+        final File pubKey = new File(root, "adbkey.pub");
+        if (!adbKey.exists() || !pubKey.exists()) {
+            return;
+        }
+
+        boolean result = CmdTools.readOuterAdbKey(adbKey, pubKey);
+        if (!result) {
+            toastShort("拷贝ADB Key失败");
+        } else {
+            adbKey.delete();
+            pubKey.delete();
+        }
     }
 
     public static class Entry {
@@ -298,8 +396,45 @@ public class IndexActivity extends BaseActivity {
         private Class<? extends Activity> targetActivity;
 
         public Entry(EntryActivity activity, Class<? extends Activity> target) {
-            this.iconId = activity.icon();
-            this.name = activity.name();
+            if (activity.icon() != -1) {
+                this.iconId = activity.icon();
+            } else if (!StringUtil.isEmpty(activity.iconName())) {
+                // 反射获取id
+                String name = activity.iconName();
+                int lastDotPos = name.lastIndexOf('.');
+                String clazz = name.substring(0, lastDotPos);
+                String field = name.substring(lastDotPos + 1);
+                try {
+                    Class RClass = ClassUtil.getClassByName(clazz);
+                    Field icon = RClass.getDeclaredField(field);
+                    this.iconId = icon.getInt(null);
+                } catch (Exception e) {
+                    LogUtil.e(TAG, "Fail to load icon result with id:" + name);
+                    this.iconId = R.drawable.solopi_main;
+                }
+            } else {
+                this.iconId = R.drawable.solopi_main;
+            }
+            String name = activity.name();
+            if (activity.nameRes() != 0) {
+                name = StringUtil.getString(activity.nameRes());
+            } else if (StringUtil.isNotEmpty(activity.nameResName())) {
+                int nameRes = 0;
+                String nameResName = activity.nameResName();
+                int lastDotPos = nameResName.lastIndexOf('.');
+                String clazz = nameResName.substring(0, lastDotPos);
+                String field = nameResName.substring(lastDotPos + 1);
+                try {
+                    Class<?> RClass = ClassUtil.getClassByName(clazz);
+                    Field nameResF = RClass.getDeclaredField(field);
+                    nameRes = nameResF.getInt(null);
+                } catch (Exception e) {
+                    LogUtil.e(TAG, "Fail to load name result with id:" + nameResName);
+                    nameRes = R.string.app_name;
+                }
+                name = StringUtil.getString(nameRes);
+            }
+            this.name = name;
             permissions = activity.permissions();
             level = activity.level();
             targetActivity = target;
@@ -406,6 +541,8 @@ public class IndexActivity extends BaseActivity {
 
             if (item.saturation != 1F) {
                 viewHolder.background.setSaturation(item.saturation);
+            } else {
+                viewHolder.background.setSaturation(1);
             }
 
             convertView.setOnClickListener(new View.OnClickListener() {
@@ -417,27 +554,19 @@ public class IndexActivity extends BaseActivity {
                         public void onPermissionResult(boolean result, String reason) {
                             LogUtil.d(TAG, "权限申请耗时：%dms", System.currentTimeMillis() - startTime);
                             if (result) {
-                                if (mPanel != null) {
-
-                                    // 记录下进入次数
-                                    Integer count = entryCount.getInteger(item.name);
-                                    if (count == null) {
-                                        count = 1;
-                                    } else {
-                                        count ++;
-                                    }
-                                    entryCount.put(item.name, count);
-                                    versionsCount.put(Integer.toString(currentVersionCode), entryCount);
-                                    SPService.putString(SPService.KEY_INDEX_RECORD, JSON.toJSONString(versionsCount));
-
-                                    mPanel.post(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            Intent intent = new Intent(IndexActivity.this, item.targetActivity);
-                                            startActivity(intent);
-                                        }
-                                    });
+                                // 记录下进入次数
+                                Integer count = entryCount.getInteger(item.name);
+                                if (count == null) {
+                                    count = 1;
+                                } else {
+                                    count ++;
                                 }
+                                entryCount.put(item.name, count);
+                                versionsCount.put(Integer.toString(currentVersionCode), entryCount);
+                                SPService.putString(SPService.KEY_INDEX_RECORD, JSON.toJSONString(versionsCount));
+
+                                Intent intent = new Intent(IndexActivity.this, item.targetActivity);
+                                startActivity(intent);
                             }
                         }
                     });

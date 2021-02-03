@@ -21,7 +21,9 @@ import android.os.Bundle;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import com.alipay.hulu.common.application.LauncherApplication;
+import com.alipay.hulu.common.injector.InjectorService;
 import com.alipay.hulu.common.service.SPService;
+import com.alipay.hulu.common.tools.CmdTools;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.MiscUtil;
 import com.alipay.hulu.common.utils.StringUtil;
@@ -33,6 +35,8 @@ import com.alipay.hulu.shared.node.action.PerformActionEnum;
 import com.alipay.hulu.shared.node.tree.AbstractNodeTree;
 import com.alipay.hulu.shared.node.tree.FakeNodeTree;
 import com.alipay.hulu.shared.node.utils.NodeTreeUtil;
+
+import java.util.concurrent.CountDownLatch;
 
 /**
  * 构建Accessibility树
@@ -253,30 +257,57 @@ public class AccessibilityNodeTree extends AbstractNodeTree {
         Bundle textData = new Bundle();
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
             if (!StringUtil.containsChinese(content)) {
-                currentNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
-                opContext.executor.executeCmd("input text " + content);
+                Rect rect = getNodeBound();
+                opContext.executor.executeClick(rect.centerX(), rect.centerY());
                 MiscUtil.sleep(500);
 
-                opContext.notifyOnFinish(new Runnable() {
-                    @Override
-                    public void run() {
-                        OperationService service = LauncherApplication.getInstance().findServiceByName(OperationService.class.getName());
-                        service.doSomeAction(new OperationMethod(PerformActionEnum.HIDE_INPUT_METHOD), null);
-                    }
-                });
+                opContext.executor.executeCmd("input text \"" + StringUtil.escapeShellText(content) + "\"");
+
+                waitInputMethodHide();
             } else {
                 opContext.notifyOnFinish(new Runnable() {
                     @Override
                     public void run() {
                         LogUtil.e(TAG, "Start Input");
                         try {
-                            String defaultIme = opContext.executor.executeCmdSync("settings get secure default_input_method");
-                            opContext.executor.executeCmdSync("settings put secure default_input_method com.alipay.hulu/.tools.AdbIME", 0);
+                            CmdTools.switchToIme("com.alipay.hulu/.tools.AdbIME");
                             Rect rect = getNodeBound();
 
-                            opContext.executor.executeCmdSync("input tap " + rect.centerX() + " " + rect.centerY(), 0);
+                            opContext.executor.executeClick(rect.centerX(), rect.centerY());
                             MiscUtil.sleep(1500);
-                            opContext.executor.executeCmdSync("am broadcast -a ADB_INPUT_TEXT --es msg '" + content + "' --es default '" + StringUtil.trim(defaultIme) + "'", 0);
+                            InjectorService.g().pushMessage("ADB_INPUT_TEXT", content);
+                        } catch (Exception e) {
+                            LogUtil.e(TAG, "Input throw Exception：" + e.getLocalizedMessage(), e);
+                        }
+                        LogUtil.e(TAG, "Finish Input");
+                        waitInputMethodHide();
+                    }
+                });
+            }
+        } else {
+            try {
+                textData.putString(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, content);
+                currentNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS, null);
+                currentNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textData);
+                opContext.notifyOnFinish(new Runnable() {
+                    @Override
+                    public void run() {
+                        waitInputMethodHide();
+                    }
+                });
+            } catch (IllegalStateException e) {
+                LogUtil.e(TAG, "Node recycled", e);
+                opContext.notifyOnFinish(new Runnable() {
+                    @Override
+                    public void run() {
+                        LogUtil.e(TAG, "Start Input");
+                        try {
+                            CmdTools.switchToIme("com.alipay.hulu/.tools.AdbIME");
+                            Rect rect = getNodeBound();
+
+                            opContext.executor.executeClick(rect.centerX(), rect.centerY());
+                            MiscUtil.sleep(1500);
+                            InjectorService.g().pushMessage("ADB_INPUT_TEXT", content);
                         } catch (Exception e) {
                             LogUtil.e(TAG, "Input throw Exception：" + e.getLocalizedMessage(), e);
                         }
@@ -284,19 +315,6 @@ public class AccessibilityNodeTree extends AbstractNodeTree {
                     }
                 });
             }
-        } else {
-            textData.putString(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, content);
-            currentNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS, null);
-            currentNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textData);
-            MiscUtil.sleep(500);
-
-            opContext.notifyOnFinish(new Runnable() {
-                @Override
-                public void run() {
-                    OperationService service = LauncherApplication.getInstance().findServiceByName(OperationService.class.getName());
-                    service.doSomeAction(new OperationMethod(PerformActionEnum.HIDE_INPUT_METHOD), null);
-                }
-            });
         }
     }
 

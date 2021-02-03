@@ -16,8 +16,10 @@
 package com.alipay.hulu.shared.event.accessibility;
 
 import android.accessibilityservice.AccessibilityService;
+import android.app.Notification;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Parcelable;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -27,13 +29,17 @@ import com.alipay.hulu.common.injector.InjectorService;
 import com.alipay.hulu.common.injector.param.SubscribeParamEnum;
 import com.alipay.hulu.common.injector.param.Subscriber;
 import com.alipay.hulu.common.injector.provider.Param;
+import com.alipay.hulu.common.injector.provider.Provider;
 import com.alipay.hulu.common.tools.BackgroundExecutor;
 import com.alipay.hulu.common.tools.CmdTools;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.StringUtil;
+import com.alipay.hulu.shared.event.constant.Constant;
 import com.alipay.hulu.shared.node.OperationService;
 import com.alipay.hulu.shared.node.action.OperationMethod;
 import com.alipay.hulu.shared.node.action.PerformActionEnum;
+import com.alipay.hulu.shared.node.locater.OperationNodeLocator;
+import com.alipay.hulu.shared.node.tree.AbstractNodeTree;
 import com.android.permission.rom.RomUtils;
 
 import java.lang.ref.WeakReference;
@@ -42,6 +48,7 @@ import java.util.List;
 /**
  * Created by qiaoruikai on 2018/10/9 4:05 PM.
  */
+@Provider(@Param(value = Constant.EVENT_TOAST_MSG, type = String.class))
 public class AccessibilityEventTracker {
     private static final String TAG ="AccessEventTracker";
 
@@ -122,7 +129,7 @@ public class AccessibilityEventTracker {
                         method.setActionEnum(PerformActionEnum.HANDLE_PERMISSION_ALERT);
                         operationRef.get().doSomeAction(method, null);
                     }
-                });
+                }, 10);
             // Vivo的悬浮窗比较特殊
             } else if (RomUtils.isVivoSystem() && StringUtil.equals(event.getPackageName(), "android")
                     && StringUtil.equals(event.getClassName(), "android.app.AlertDialog")
@@ -137,10 +144,11 @@ public class AccessibilityEventTracker {
                             method.setActionEnum(PerformActionEnum.HANDLE_PERMISSION_ALERT);
                             operationRef.get().doSomeAction(method, null);
                         }
-                    });
+                    }, 10);
                 }
             // 小米的权限弹窗
-            } else if (RomUtils.checkIsMiuiRom() && StringUtil.equals(event.getPackageName(), "com.lbe.security.miui")) {
+            } else if (RomUtils.checkIsMiuiRom() && StringUtil.equals(event.getPackageName(), "com.lbe.security.miui")
+                    && event.getSource() != null) {
                 BackgroundExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
@@ -148,7 +156,7 @@ public class AccessibilityEventTracker {
                         method.setActionEnum(PerformActionEnum.HANDLE_PERMISSION_ALERT);
                         operationRef.get().doSomeAction(method, null);
                     }
-                });
+                }, 10);
             // 锤子的悬浮窗
             } else if (RomUtils.isSmartisanSystem() && StringUtil.equals(event.getClassName(), "com.android.server.SmtPermissionDialog")) {
                 BackgroundExecutor.execute(new Runnable() {
@@ -158,7 +166,7 @@ public class AccessibilityEventTracker {
                         method.setActionEnum(PerformActionEnum.HANDLE_PERMISSION_ALERT);
                         operationRef.get().doSomeAction(method, null);
                     }
-                });
+                }, 10);
             // Sony的悬浮窗
             } else if (RomUtils.isSonySystem() && StringUtil.equals(event.getPackageName(), "com.sonymobile.cta")
                     &&StringUtil.contains(event.getClassName(), "GrantPermissionsActivity")) {
@@ -169,7 +177,7 @@ public class AccessibilityEventTracker {
                         method.setActionEnum(PerformActionEnum.HANDLE_PERMISSION_ALERT);
                         operationRef.get().doSomeAction(method, null);
                     }
-                });
+                }, 10);
             // 三星的权限提示框
             } else if (RomUtils.isSamSungSystem() && StringUtil.equals(event.getPackageName(), "com.samsung.android.packageinstaller")
                     && event.getSource() != null) {
@@ -185,7 +193,7 @@ public class AccessibilityEventTracker {
                         public void run() {
                             Rect pos = new Rect();
                             targetNode.getBoundsInScreen(pos);
-                            CmdTools.execAdbCmd("input tap " + pos.centerX() + " " + pos.centerY(), 0);
+                            CmdTools.execClick(pos.centerX(), pos.centerY());
 
                             // 点击了确定，需要cancel
                             operationRef.get().invalidRoot();
@@ -204,7 +212,85 @@ public class AccessibilityEventTracker {
                         method.setActionEnum(PerformActionEnum.HANDLE_ALERT);
                         operationRef.get().doSomeAction(method, null);
                     }
-                });
+                }, 10);
+            // Android Q 权限处理
+            } else if (Build.VERSION.SDK_INT >= 29 && (StringUtil.equals(event.getPackageName(), "com.android.permissioncontroller")
+                        || StringUtil.equals(event.getPackageName(), "com.google.android.permissioncontroller"))
+                    && event.getSource() != null) {
+                // Google官方系统弹窗
+                BackgroundExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        OperationMethod method = new OperationMethod();
+                        method.setActionEnum(PerformActionEnum.HANDLE_PERMISSION_ALERT);
+                        operationRef.get().doSomeAction(method, null);
+                    }
+                }, 10);
+            } else if (RomUtils.isOppoSystem()
+                    && StringUtil.equals(event.getPackageName(), "com.coloros.securepay")
+                    && event.getSource() != null) {
+                // OPPO的充电提示弹窗
+                List<AccessibilityNodeInfo> target = event.getSource()
+                        .findAccessibilityNodeInfosByText("忽略");
+
+                // 找到了，直接点确定
+                if (target != null && target.size() > 0) {
+                    final AccessibilityNodeInfo targetNode = target.get(0);
+                    BackgroundExecutor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            Rect pos = new Rect();
+                            targetNode.getBoundsInScreen(pos);
+                            CmdTools.execClick(pos.centerX(), pos.centerY());
+
+                            // 点击了确定，需要cancel
+                            operationRef.get().invalidRoot();
+                        }
+                    });
+                }
+            } else if (RomUtils.checkIsHuaweiRom() && StringUtil.equals(event.getPackageName(), "com.android.packageinstaller")
+                    && StringUtil.equals(event.getClassName(), "android.app.AlertDialog")
+                    && event.getSource() != null) {
+                // emui 4.X
+                List<AccessibilityNodeInfo> nodeInfos = event.getSource().findAccessibilityNodeInfosByViewId("com.android.packageinstaller:id/permission_allow_button");
+                if (nodeInfos != null && nodeInfos.size() == 1 && StringUtil.contains(nodeInfos.get(0).getText(), "允许")) {
+                    Rect pos = new Rect();
+                    nodeInfos.get(0).getBoundsInScreen(pos);
+                    CmdTools.execClick(pos.centerX(), pos.centerY());
+
+                    operationRef.get().invalidRoot();
+                }
+            }
+
+            // 小米 后处理
+            if (RomUtils.checkIsMiuiRom() && StringUtil.equalsIgnoreCase(event.getPackageName(), "com.lbe.security.miui")
+                    && event.getSource() != null) {
+                // MIUI 12
+                List<AccessibilityNodeInfo> nodeInfos = event.getSource().findAccessibilityNodeInfosByViewId("com.lbe.security.miui:id/permission_allow_foreground_only_button");
+                if (nodeInfos != null && nodeInfos.size() == 1 && StringUtil.contains(nodeInfos.get(0).getText(), "允许")) {
+                    Rect pos = new Rect();
+                    nodeInfos.get(0).getBoundsInScreen(pos);
+                    CmdTools.execClick(pos.centerX(), pos.centerY());
+
+                    operationRef.get().invalidRoot();
+                } else {
+                    OperationService service = operationRef.get();
+
+                    nodeInfos = event.getSource().findAccessibilityNodeInfosByText("仅在使用中允许");
+                    if (nodeInfos != null && nodeInfos.size() == 1 && StringUtil.contains(nodeInfos.get(0).getText(), "允许")) {
+                        Rect pos = new Rect();
+                        nodeInfos.get(0).getBoundsInScreen(pos);
+                        CmdTools.execClick(pos.centerX(), pos.centerY());
+                    } else {
+                        AbstractNodeTree root = service.getCurrentRoot();
+                        AbstractNodeTree node = OperationNodeLocator.findAbstractNodeByContainsText(root, "允许");
+                        if (node != null) {
+                            operationRef.get().doSomeAction(new OperationMethod(PerformActionEnum.CLICK), node);
+                        }
+                    }
+
+                    service.invalidRoot();
+                }
             }
 
             // Android 9.0的私有API弹窗
@@ -217,23 +303,27 @@ public class AccessibilityEventTracker {
                         if (button != null && button.size() > 0) {
                             Rect pos = new Rect();
                             button.get(0).getBoundsInScreen(pos);
-                            CmdTools.execAdbCmd("input tap " + pos.centerX() + " " + pos.centerY(), 0);
+                            CmdTools.execClick(pos.centerX(), pos.centerY());
 
                             operationRef.get().invalidRoot();
                         }
                     }
                 }
-            } else if (RomUtils.checkIsHuaweiRom() && StringUtil.equals(event.getPackageName(), "com.android.packageinstaller")
-                    && StringUtil.equals(event.getClassName(), "android.app.AlertDialog")
-                    && event.getSource() != null) {
-                // emui 4.X
-                List<AccessibilityNodeInfo> nodeInfos = event.getSource().findAccessibilityNodeInfosByViewId("com.android.packageinstaller:id/permission_allow_button");
-                if (nodeInfos != null && nodeInfos.size() == 1 && StringUtil.contains(nodeInfos.get(0).getText(), "允许")) {
-                    Rect pos = new Rect();
-                    nodeInfos.get(0).getBoundsInScreen(pos);
-                    CmdTools.execAdbCmd("input tap " + pos.centerX() + " " + pos.centerY(), 0);
-
-                    operationRef.get().invalidRoot();
+            }
+        } else if(event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            //获取消息来源
+            String sourcePackageName = (String) event.getPackageName();
+            //获取事件具体信息
+            Parcelable parcelable = event.getParcelableData();
+            //如果是下拉通知栏消息
+            if (!(parcelable instanceof Notification)) {
+                List<CharSequence> texts = event.getText();
+                if (texts != null && texts.size() > 0) {
+                    //其它通知信息，包括Toast
+                    String toastMsg = StringUtil.toString(event.getText().get(0));
+                    String log = "Latest Toast Message: " + toastMsg + " [Source: " + sourcePackageName + "]";
+                    LogUtil.i(TAG, log);
+                    InjectorService.g().pushMessage(Constant.EVENT_TOAST_MSG, toastMsg);
                 }
             }
         }

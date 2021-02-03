@@ -135,7 +135,7 @@ public class RecordScreenActionProvider implements ActionProvider {
             uploadUrl = method.getParam(KEY_RECORD_UPLOAD_URL);
 
             if (ClassUtil.getPatchInfo(VideoAnalyzer.SCREEN_RECORD_PATCH) == null) {
-                LauncherApplication.getInstance().showToast("加载计算插件中");
+                LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.settings__load_plugin));
                 context.notifyOnFinish(new Runnable() {
                     @Override
                     public void run() {
@@ -176,7 +176,7 @@ public class RecordScreenActionProvider implements ActionProvider {
                 @Override
                 public void run() {
                     try {
-                        injectorService.pushMessage(SHOW_LOADING_DIALOG, "正在计算响应耗时");
+                        injectorService.pushMessage(SHOW_LOADING_DIALOG, StringUtil.getString(R.string.record_screen__calculating_response_time));
 
                         long startTime = binder.stopRecord();
 
@@ -233,9 +233,9 @@ public class RecordScreenActionProvider implements ActionProvider {
 
         Map<String, String> desc = new HashMap<>(2);
         if (!isRecording) {
-            desc.put(ACTION_START_RECORD_SCREEN, "开始响应耗时计算");
+            desc.put(ACTION_START_RECORD_SCREEN, StringUtil.getString(R.string.record_screen__start_launch_time));
         } else {
-            desc.put(ACTION_STOP_RECORD_SCREEN, "结束响应耗时计算");
+            desc.put(ACTION_STOP_RECORD_SCREEN, StringUtil.getString(R.string.record_screen__stop_launch_time));
         }
 
         return desc;
@@ -252,8 +252,8 @@ public class RecordScreenActionProvider implements ActionProvider {
                     public void onAnalyzeFinished(final long result) {
                         UIOperationMessage message = new UIOperationMessage();
                         message.eventType = UIOperationMessage.TYPE_DIALOG;
-                        message.params.put("msg", "耗时:" + result + "ms");
-                        message.params.put("title", "响应耗时");
+                        message.params.put("msg", StringUtil.getString(R.string.record_screen__cost_time, result));
+                        message.params.put("title", StringUtil.getString(R.string.record_screen__response_time));
                         injectorService.pushMessage(null, message, false);
 
                         // 如果有配置上传信息
@@ -408,7 +408,7 @@ public class RecordScreenActionProvider implements ActionProvider {
 
             LogUtil.d(TAG, "Receive event: " + actionEnum);
 
-            // 主机模式需要监控葫芦点击事件
+            // 主机模式需要监控点击事件
             if (inMasterMode) {
                 LogUtil.d(TAG, "主机模式，控制悬浮窗点击");
                 injectorService.pushMessage("FloatClickMethod", new Callable<OperationMethod>() {

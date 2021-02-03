@@ -85,9 +85,6 @@ public class ImageCompareActionProvider implements ActionProvider {
 
     @Override
     public boolean canProcess(String action) {
-        if (Build.VERSION.SDK_INT < 21) {
-            return false;
-        }
         return StringUtil.equals(action, ACTION_CLICK_BY_SCREENSHOT) ||
                 StringUtil.equals(action, ACTION_ASSERT_SCREENSHOT);
 
@@ -96,10 +93,6 @@ public class ImageCompareActionProvider implements ActionProvider {
     @Override
     public boolean processAction(final String targetAction, AbstractNodeTree node,
                                  OperationMethod method, final OperationContext context) {
-
-        if (Build.VERSION.SDK_INT < 21) {
-            return false;
-        }
 
         // 同步执行，没点到就中断
         if (StringUtil.equals(targetAction, ACTION_CLICK_BY_SCREENSHOT)) {
@@ -164,7 +157,7 @@ public class ImageCompareActionProvider implements ActionProvider {
                     }, 1000);
 
                     // 执行adb命令
-                    CmdTools.execAdbCmd("input tap " + target.centerX() + " " + target.centerY(), 2000);
+                    context.executor.executeClick(target.centerX(), target.centerY());
 
                     // 等500ms
                     MiscUtil.sleep(500);
@@ -218,7 +211,7 @@ public class ImageCompareActionProvider implements ActionProvider {
 
                 // 还没有，无法执行
                 if (rs == null) {
-                    LauncherApplication.getInstance().showToast("图像断言失败");
+                    LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.image_compare__assert_failed));
                     return false;
                 }
             }
@@ -228,7 +221,7 @@ public class ImageCompareActionProvider implements ActionProvider {
                 Rect target = findTargetRect(rs, query, context.screenWidth, context.screenHeight, defaultWidth);
                 if (target == null) {
                     LogUtil.e(TAG, "Can't find target Image");
-                    LauncherApplication.getInstance().showToast("图像断言失败");
+                    LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.image_compare__assert_failed));
                     return false;
                 } else {
                     // 高亮控件
@@ -242,7 +235,7 @@ public class ImageCompareActionProvider implements ActionProvider {
 
                     // 执行adb命令
                     context.notifyOperationFinish();
-                    LauncherApplication.getInstance().showToast("图像断言成功");
+                    LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.image_compare__assert_success));
                     return true;
                 }
             } catch (Exception e) {
@@ -250,7 +243,7 @@ public class ImageCompareActionProvider implements ActionProvider {
                 context.notifyOperationFinish();
             }
 
-            LauncherApplication.getInstance().showToast("图像断言失败");
+            LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.image_compare__assert_failed));
             return false;
         }
 
@@ -261,13 +254,9 @@ public class ImageCompareActionProvider implements ActionProvider {
     public Map<String, String> provideActions(AbstractNodeTree node) {
         Map<String, String> actionMap = new HashMap<>(2);
 
-        if (Build.VERSION.SDK_INT < 21) {
-            return actionMap;
-        }
-
         // 配置功能项
-        actionMap.put(ACTION_ASSERT_SCREENSHOT, "截图断言");
-        actionMap.put(ACTION_CLICK_BY_SCREENSHOT, "根据截图点击");
+        actionMap.put(ACTION_ASSERT_SCREENSHOT, StringUtil.getString(R.string.image_compare__screenshot_assert));
+        actionMap.put(ACTION_CLICK_BY_SCREENSHOT, StringUtil.getString(R.string.image_compare__screenshot_click));
 
         return actionMap;
     }
@@ -275,11 +264,6 @@ public class ImageCompareActionProvider implements ActionProvider {
     @Override
     public void provideView(final Context context, String action, final OperationMethod method,
                             final AbstractNodeTree node, final ViewLoadCallback callback) {
-        if (Build.VERSION.SDK_INT < 21) {
-            LogUtil.e(TAG, "不支持android: " + Build.VERSION.SDK_INT);
-            callback.onViewLoaded(null);
-            return;
-        }
 
         if (!StringUtil.equals(action, ACTION_CLICK_BY_SCREENSHOT) &&
                 !StringUtil.equals(action, ACTION_ASSERT_SCREENSHOT)) {

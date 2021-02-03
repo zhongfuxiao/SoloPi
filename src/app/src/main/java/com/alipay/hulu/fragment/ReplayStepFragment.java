@@ -16,13 +16,12 @@
 package com.alipay.hulu.fragment;
 
 import android.content.DialogInterface;
-import android.graphics.Bitmap;
 import android.os.Bundle;
-import android.support.annotation.Nullable;
-import android.support.v4.app.Fragment;
-import android.support.v7.app.AlertDialog;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
+import androidx.appcompat.app.AlertDialog;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -33,14 +32,14 @@ import android.widget.TextView;
 
 import com.alipay.hulu.R;
 import com.alipay.hulu.actions.ImageCompareActionProvider;
+import com.alipay.hulu.bean.CaseStepStatus;
 import com.alipay.hulu.bean.ReplayResultBean;
 import com.alipay.hulu.bean.ReplayStepInfoBean;
 import com.alipay.hulu.common.utils.GlideApp;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.StringUtil;
-import com.alipay.hulu.shared.node.action.OperationExecutor;
 import com.alipay.hulu.shared.node.action.OperationMethod;
-import com.alipay.hulu.shared.node.tree.export.OperationStepProvider;
+import com.alipay.hulu.shared.node.tree.export.OperationStepExporter;
 import com.alipay.hulu.shared.node.tree.OperationNode;
 import com.alipay.hulu.shared.node.tree.export.bean.OperationStep;
 import com.alipay.hulu.shared.node.utils.BitmapUtil;
@@ -127,12 +126,12 @@ public class ReplayStepFragment extends Fragment {
             @Override
             public void onBindViewHolder(ResultItemViewHolder holder, int position) {
                 Pair<OperationStep, ReplayStepInfoBean> data = contents.get(position);
-                String action = "已完成";
+                CaseStepStatus action = CaseStepStatus.FINISH;
                 if (!StringUtil.isEmpty(resultBean.getExceptionMessage())) {
                     if (resultBean.getExceptionStep() == position) {
-                        action = "失败";
+                        action = CaseStepStatus.FAIL;
                     } else if (resultBean.getExceptionStep() < position) {
-                        action = "尚未执行";
+                        action = CaseStepStatus.UNENFORCED;
                     }
                 }
                 holder.bindData(data.first, data.second == null? new ReplayStepInfoBean(): data.second, action);
@@ -193,7 +192,7 @@ public class ReplayStepFragment extends Fragment {
             mFindCapture.setOnClickListener(this);
         }
 
-        void bindData(OperationStep operation, ReplayStepInfoBean replay, String status) {
+        void bindData(OperationStep operation, ReplayStepInfoBean replay, CaseStepStatus status) {
             mActionName.setText(operation.getOperationMethod().getActionEnum().getDesc());
             StringBuilder sb;
 
@@ -235,27 +234,27 @@ public class ReplayStepFragment extends Fragment {
             }
 
             // 配置状态
-            if (StringUtil.equals(status, "已完成")) {
+            if (status == CaseStepStatus.FINISH) {
                 mStatus.setTextColor(0xff65c0ba);
-            } else if (StringUtil.equals(status, "失败")) {
+            } else if (status == CaseStepStatus.FAIL) {
                 mStatus.setTextColor(0xfff76262);
             } else {
                 mStatus.setTextColor(mStatus.getResources().getColor(R.color.secondaryText));
             }
-            mStatus.setText(status);
+            mStatus.setText(status.getName());
 
 
             boolean captureFlag = false;
             try {
                 // 获取base64信息
                 findBytes = BitmapUtil.decodeBase64(findNode == null? null:
-                        findNode.getExtraValue(OperationStepProvider.CAPTURE_IMAGE_BASE64));
+                        findNode.getExtraValue(OperationStepExporter.CAPTURE_IMAGE_BASE64));
                 targetBytes = null;
                 if (method != null) {
                     if (method.containsParam(ImageCompareActionProvider.KEY_TARGET_IMAGE)) {
                         targetBytes = BitmapUtil.decodeBase64(method.getParam(ImageCompareActionProvider.KEY_TARGET_IMAGE));
-                    } else if (node != null && node.containsExtra(OperationStepProvider.CAPTURE_IMAGE_BASE64)) {
-                        targetBytes = BitmapUtil.decodeBase64(node.getExtraValue(OperationStepProvider.CAPTURE_IMAGE_BASE64));
+                    } else if (node != null && node.containsExtra(OperationStepExporter.CAPTURE_IMAGE_BASE64)) {
+                        targetBytes = BitmapUtil.decodeBase64(node.getExtraValue(OperationStepExporter.CAPTURE_IMAGE_BASE64));
                     }
                 }
 
@@ -277,12 +276,15 @@ public class ReplayStepFragment extends Fragment {
                 LogUtil.e("ReplayStepFrag", "配置控件截图信息失败", e);
             }
 
-            // 如果有设置截图信息
-            if (captureFlag) {
+            if (node != null) {
                 mNodeRow.setVisibility(View.VISIBLE);
-                mCaptureRow.setVisibility(View.VISIBLE);
             } else {
                 mNodeRow.setVisibility(View.GONE);
+            }
+            // 如果有设置截图信息
+            if (captureFlag) {
+                mCaptureRow.setVisibility(View.VISIBLE);
+            } else {
                 mCaptureRow.setVisibility(View.GONE);
             }
         }
@@ -312,8 +314,8 @@ public class ReplayStepFragment extends Fragment {
         private void showContentDialog(OperationNode node) {
             AlertDialog dialog = new AlertDialog.Builder(mTargetNode.getContext())
                     .setView(wrapView(node))
-                    .setTitle("节点结构")
-                    .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                    .setTitle(R.string.replay__node_struct)
+                    .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             dialog.dismiss();

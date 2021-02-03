@@ -16,18 +16,18 @@
 package com.alipay.hulu.common.utils;
 
 import android.content.Context;
-import android.support.annotation.StringRes;
+import androidx.annotation.StringRes;
 
 import com.alipay.hulu.common.application.LauncherApplication;
-import com.alipay.hulu.common.constant.Constant;
 import com.alipay.hulu.common.service.SPService;
 
 import java.lang.Character.UnicodeBlock;
 import java.lang.reflect.Array;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Random;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,6 +47,10 @@ public class StringUtil {
      * 整数格式
      */
     private static final Pattern INTEGER_PATTERN = Pattern.compile("[-+]?\\d+");
+    /**
+     * 纯数字格式
+     */
+    private static final Pattern DIGITS_PATTERN = Pattern.compile("\\d+");
 
     /**
      * 字符串是否为空
@@ -58,6 +62,15 @@ public class StringUtil {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 字符串是否非空
+     * @param origin
+     * @return
+     */
+    public static boolean isNotEmpty(CharSequence origin) {
+        return origin != null && origin.length() > 0;
     }
 
     /**
@@ -101,6 +114,19 @@ public class StringUtil {
         }
 
         return origin.toString();
+    }
+
+    /**
+     * 是否为纯数字字符串
+     * @param origin
+     * @return
+     */
+    public static boolean isDigits(CharSequence origin) {
+        if (origin == null || origin.length() == 0) {
+            return false;
+        }
+
+        return DIGITS_PATTERN.matcher(origin).matches();
     }
 
     /**
@@ -231,6 +257,31 @@ public class StringUtil {
     public static boolean equals(CharSequence a, CharSequence b) {
         // 两者都为空，相等
         if (a == null && b == null) {
+            return true;
+        }
+
+        // 一个为空，不等
+        if (a == null || b == null) {
+            return false;
+        }
+
+        // 都不为空，直接比较
+        return a.toString().equals(b.toString());
+    }
+
+    /**
+     * 比较字符串是否相等
+     * @param a
+     * @param b
+     * @return
+     */
+    public static boolean equalsOrMatch(CharSequence a, CharSequence b) {
+        // 两者都为空，相等
+        if (a == null && b == null) {
+            return true;
+        }
+
+        if (a != null && a.equals("*")) {
             return true;
         }
 
@@ -437,18 +488,62 @@ public class StringUtil {
      * @return 随机字符串
      */
     public static String generateRandomString(int length) {
+        if (length <= 0) {
+            return "";
+        }
+
         StringBuilder builder = new StringBuilder(length);
-        Random random = new Random(System.currentTimeMillis());
-        for (int i = 0; i < length; i++) {
-            int currentValue = random.nextInt(35);
-            if (currentValue < 10) {
-                builder.append(currentValue);
+
+        // UUID填充
+        int currentSize = 0;
+        while (currentSize < length) {
+            UUID uuid = UUID.randomUUID();
+            String tmp = uuid.toString().replace("-", "");
+            if (tmp.length() <= length - currentSize) {
+                builder.append(tmp);
+                currentSize += tmp.length();
             } else {
-                builder.append((char) ('a' + (currentValue - 10)));
+                builder.append(tmp, 0, length - currentSize);
+                currentSize = length;
             }
         }
+
         return builder.toString();
     }
+
+    /**
+     * 替换SHELL中的特殊字符
+     * @param content
+     * @return
+     */
+    public static String escapeShellText(String content) {
+        return content.replace("$", "\\$")
+                .replace("\"", "\\\"")
+                .replace("`", "\\`")
+                .replace("\\", "\\\\");
+    }
+
+    /**
+     * 计数字符串中数字个数
+     * @param origin
+     * @return
+     */
+    public static int numberCount(String origin) {
+        if (isEmpty(origin)) {
+            return 0;
+        }
+
+        int count = 0;
+        for(int i = 0; i < origin.length(); i++){
+            char checkChar = origin.charAt(i);
+            if(checkChar >= '0' && checkChar <= '9'){
+                count++;
+            }
+        }
+
+        return count;
+    }
+
 
     /**
      * 判断是否包含中文
@@ -468,6 +563,24 @@ public class StringUtil {
         return false;
     }
 
+    /**
+     * 判断是否包含非ASCII字符
+     * @param checkStr
+     * @return
+     */
+    public static boolean containsNonASCII(CharSequence checkStr){
+        if(!isEmpty(checkStr)){
+            String checkChars = checkStr.toString();
+            for(int i = 0; i < checkChars.length(); i++){
+                char checkChar = checkChars.charAt(i);
+                if(checkChar > 127){
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static boolean checkCharContainChinese(char checkChar){
         UnicodeBlock ub = UnicodeBlock.of(checkChar);
         if(UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS == ub ||
@@ -479,6 +592,31 @@ public class StringUtil {
             return true;
         }
         return false;
+    }
+
+    private static final HashSet<Character> REGEX_SPECIAL_CHARS = new HashSet<>(Arrays.asList('\\', '$', '(', ')', '*', '+', '.', '[', ']', '?', '^', '{', '}', '|'));
+
+    /**
+     * 处理正则特殊字符
+     * @param origin
+     * @return
+     */
+    public static String escapeRegex(String origin) {
+        if (isEmpty(origin)) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder(origin.length());
+        char[] charArray = origin.toCharArray();
+        for (char item: charArray) {
+            if (REGEX_SPECIAL_CHARS.contains(item)) {
+                sb.append("\\").append(item);
+            } else {
+                sb.append(item);
+            }
+        }
+
+        return sb.toString();
     }
 
     /**

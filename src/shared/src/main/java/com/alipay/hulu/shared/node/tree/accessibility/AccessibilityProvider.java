@@ -27,9 +27,14 @@ import com.alipay.hulu.common.injector.InjectorService;
 import com.alipay.hulu.common.injector.param.SubscribeParamEnum;
 import com.alipay.hulu.common.injector.param.Subscriber;
 import com.alipay.hulu.common.injector.provider.Param;
+import com.alipay.hulu.common.service.SPService;
+import com.alipay.hulu.common.tools.CmdTools;
+import com.alipay.hulu.common.utils.Callback;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.MiscUtil;
 import com.alipay.hulu.common.utils.StringUtil;
+import com.alipay.hulu.shared.R;
+import com.alipay.hulu.shared.event.accessibility.AccessibilityServiceImpl;
 import com.alipay.hulu.shared.node.AbstractProvider;
 import com.alipay.hulu.shared.node.tree.FakeNodeTree;
 import com.alipay.hulu.shared.node.tree.MetaTree;
@@ -41,6 +46,10 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import static com.alipay.hulu.common.utils.activity.PermissionDialogActivity.cleanInstrumentationAndUiAutomator;
 
 /**
  * Created by qiaoruikai on 2018/10/8 12:46 PM.
@@ -68,11 +77,65 @@ public class AccessibilityProvider implements AbstractProvider {
     }
 
     /**
+     * 检查前台activity可访问行
+     */
+    private void checkFrontActivityAccessibility() {
+        AccessibilityService service = accessibilityServiceRef.get();
+        if (service == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            // 必须要能拿到顶层应用
+            boolean waitToFind = false;
+            String topPkg = null;
+            String[] pkgAndActivity = CmdTools.getTopPkgAndActivity();
+            if (pkgAndActivity == null) {
+                return;
+            }
+
+            topPkg = pkgAndActivity[0];
+            waitToFind = true;
+            LogUtil.i(TAG, "目标检查窗口:" + topPkg);
+
+            List<AccessibilityWindowInfo> windowInfos = service.getWindows();
+            for (AccessibilityWindowInfo win : windowInfos) {
+                AccessibilityNodeInfo root = win.getRoot();
+
+                // 不包含子节点，直接跳过
+                if (root == null) {
+                    continue;
+                }
+
+                LogUtil.i(TAG, "当前访问窗口:" + root.getPackageName());
+
+                // 是否能够找到目标应用
+                if (StringUtil.contains(root.getPackageName(), topPkg)) {
+                    waitToFind = false;
+                    break;
+                }
+            }
+
+            // 如果找不到顶层Activity所在window，说明当前AccessibilityService有问题，重启一下
+            if (waitToFind) {
+                simpleRestartAccessibilityService();
+            }
+        } else {
+            // 如果获取ActiveWindow失败，也进行重启
+            if (service.getRootInActiveWindow() == null) {
+                simpleRestartAccessibilityService();
+            }
+        }
+    }
+
+    /**
      * 获取根节点
-     * @param service
      * @return
      */
-    private MetaTree getRootInWindows(AccessibilityService service) {
+    private MetaTree getRootInWindows() {
+        AccessibilityService service = accessibilityServiceRef.get();
+        if (service == null) {
+            return null;
+        }
         if (Build.VERSION.SDK_INT >= 21) {
             // 构建Windows树
             List<AccessibilityWindowInfo> windowInfos = service.getWindows();
@@ -86,7 +149,7 @@ public class AccessibilityProvider implements AbstractProvider {
                 if (root == null) {
                     continue;
                 }
-                // 如果是Soloπ自己的window，就不处理
+                // 如果是SoloPi自己的window，就不处理
                 if (StringUtil.equals(root.getPackageName(), "com.alipay.hulu")) {
                     LogUtil.d(TAG, "自己的Windows，不处理");
                     continue;
@@ -101,6 +164,7 @@ public class AccessibilityProvider implements AbstractProvider {
 
                 // 首先是active window
                 if (win.isActive()) {
+                    LogUtil.i(TAG, "Active window:::" + root.getPackageName());
                     targetWin = win;
                     break;
                     // 然后考虑有Accessibility focus的
@@ -216,6 +280,9 @@ public class AccessibilityProvider implements AbstractProvider {
             return null;
         }
 
+        // 预先检查可访问行
+        checkFrontActivityAccessibility();
+
         reloadFlag = false;
         MetaTree root = null;
         int retryCount = 0;
@@ -225,7 +292,7 @@ public class AccessibilityProvider implements AbstractProvider {
         // 重试三次
         while (root == null && retryCount < 3) {
             try {
-                root = loadMetaTree(service);
+                root = loadMetaTree();
                 retryCount++;
             } catch (Exception e) {
                 LogUtil.e(TAG, "Load accessibility tree throw exception: " + e.getMessage(), e);
@@ -237,20 +304,22 @@ public class AccessibilityProvider implements AbstractProvider {
 
     /**
      * 加载Meta树
-     * @param service
      * @return
      */
-    private MetaTree loadMetaTree(AccessibilityService service) {
-        MetaTree rootNode = getRootInWindows(service);
+    private MetaTree loadMetaTree() {
+        MetaTree rootNode = getRootInWindows();
         int retryCount = 0;
         while ((rootNode == null || rootNode.getCurrentNode() == null) && retryCount < 3) {
             MiscUtil.sleep(500);
             retryCount ++;
-            rootNode = getRootInWindows(service);
+            rootNode = getRootInWindows();
         }
 
         if (rootNode == null || rootNode.getCurrentNode() == null) {
             LogUtil.e(TAG, "根节点为空");
+
+            // 重启辅助功能
+            restartAccessibilityService();
             return null;
         }
 
@@ -305,6 +374,85 @@ public class AccessibilityProvider implements AbstractProvider {
         }
 
         return rootNode;
+    }
+
+    /**
+     * 重启辅助功能
+     */
+    private void restartAccessibilityService() {
+        LauncherApplication.getInstance().showToast(StringUtil.getString(R.string.permission__restarting_accessibility));
+        // 关uiautomator
+        cleanInstrumentationAndUiAutomator();
+
+        // 切换回TalkBack
+        CmdTools.putAccessibility("enabled_accessibility_services", "com.android.talkback/com.google.android.marvin.talkback.TalkBackService");
+        // 等2秒
+        MiscUtil.sleep(2000);
+
+        CmdTools.execHighPrivilegeCmd("settings put secure enabled_accessibility_services com.alipay.hulu/com.alipay.hulu.shared.event.accessibility.AccessibilityServiceImpl");
+
+        final CountDownLatch latch = new CountDownLatch(1);
+        InjectorService.g().waitForMessage(SubscribeParamEnum.ACCESSIBILITY_SERVICE, new Callback<AccessibilityService>() {
+            @Override
+            public void onResult(AccessibilityService item) {
+                LogUtil.i(TAG, "Accessibility Service 回调成功");
+                latch.countDown();
+            }
+
+            @Override
+            public void onFailed() {
+                latch.countDown();
+            }
+        });
+
+        CmdTools.putAccessibility("enabled_accessibility_services", "com.alipay.hulu/com.alipay.hulu.shared.event.accessibility.AccessibilityServiceImpl");
+
+        // 等待辅助功能重新激活
+        try {
+            latch.await(20000, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            LogUtil.e(TAG, "Catch java.lang.InterruptedException: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 重启辅助功能
+     */
+    private void simpleRestartAccessibilityService() {
+        LauncherApplication.getInstance().showToast(R.string.permission__restarting_accessibility);
+
+        // 切换回TalkBack
+        CmdTools.putAccessibility("enabled_accessibility_services", "com.android.talkback/com.google.android.marvin.talkback.TalkBackService");
+        // 等2秒
+        MiscUtil.sleep(2000);
+        final CountDownLatch latch = new CountDownLatch(1);
+        InjectorService.g().waitForMessage(SubscribeParamEnum.ACCESSIBILITY_SERVICE, new Callback<AccessibilityService>() {
+            @Override
+            public void onResult(AccessibilityService item) {
+                LogUtil.i(TAG, "Accessibility 回调");
+                latch.countDown();
+            }
+
+            @Override
+            public void onFailed() {
+                latch.countDown();
+            }
+        });
+
+        CmdTools.putAccessibility("enabled_accessibility_services", "com.alipay.hulu/com.alipay.hulu.shared.event.accessibility.AccessibilityServiceImpl");
+
+        LogUtil.i(TAG, "等待辅助功能重新激活");
+        long startTime = System.currentTimeMillis();
+
+        LauncherApplication.getInstance().showToast(R.string.permission__starting_accessibility_service);
+
+        // 等待辅助功能重新激活
+        try {
+            latch.await(20000, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            LogUtil.e(TAG, "Catch java.lang.InterruptedException: " + e.getMessage(), e);
+        }
+        LogUtil.i(TAG, "等待辅助功能恢复完成，耗时: " + (System.currentTimeMillis() - startTime));
     }
 
     @Override

@@ -30,6 +30,7 @@ import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.StringUtil;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -131,7 +132,12 @@ public class FpsUtil {
     /**
      * 帧标准间隔
      */
-    private static final double fpsPeriod = 16666D;
+    private static Double FPS_PERIOD = null;
+
+    /**
+     * 标准帧数
+     */
+    private static int FRAME_PER_SECOND = 60;
 
 
     @Subscriber(@Param(SubscribeParamEnum.APP))
@@ -196,49 +202,98 @@ public class FpsUtil {
      * @return 应用在顶层的Activity，不存在返回空字符串
      */
     private static String[] getTopActivityAndProcess(String app, List<ProcessInfo> childrenPids) {
-
-        String cmd = "dumpsys activity top | grep \"ACTIVITY " + app + "\"";
         String[] topActivityAndPackage;
-        // 每行一个Activity，切换界面时可能存在多个Activity，无法用上一行的task，可能是自定义的
-        topActivityAndPackage = CmdTools.execAdbCmd(cmd, 500).split("\n");
-
         String topActivity = "";
+        if (Build.VERSION.SDK_INT < 29) {
+            String cmd = "dumpsys activity top | grep \"ACTIVITY " + app + "\"";
+            // 每行一个Activity，切换界面时可能存在多个Activity，无法用上一行的task，可能是自定义的
+            topActivityAndPackage = CmdTools.execHighPrivilegeCmd(cmd, 500).split("\n");
 
-        // 当找到了数据
-        if (topActivityAndPackage.length > 0 && !StringUtil.isEmpty(topActivityAndPackage[0])) {
-            String[] contents = topActivityAndPackage[0].trim().split("\\s+");
-            String activity = contents[1];
+            // 当找到了数据
+            if (topActivityAndPackage.length > 0 && !StringUtil.isEmpty(topActivityAndPackage[0])) {
+                String[] contents = topActivityAndPackage[0].trim().split("\\s+");
+                String activity = contents[1];
 
-            String[] appAndAct = activity.split("/");
-            if (appAndAct.length > 1 && StringUtil.startWith(appAndAct[1], ".")) {
-                activity = appAndAct[0] + "/" + appAndAct[0] + appAndAct[1];
-            }
+                String[] appAndAct = activity.split("/");
+                if (appAndAct.length > 1 && StringUtil.startWith(appAndAct[1], ".")) {
+                    activity = appAndAct[0] + "/" + appAndAct[0] + appAndAct[1];
+                }
 
-            String packageName = app;
+                String packageName = app;
 
-            // 确定下pid
-            String pidInfo = contents[contents.length - 1];
-            int pid = 0;
-            if (StringUtil.startWith(pidInfo, "pid=")) {
-                pid = Integer.parseInt(pidInfo.substring(4));
-            }
+                // 确定下pid
+                String pidInfo = contents[contents.length - 1];
+                int pid = 0;
+                if (StringUtil.startWith(pidInfo, "pid=")) {
+                    pid = Integer.parseInt(pidInfo.substring(4));
+                }
 
-            // 通过pid找下实际的子进程，没找到就直接用主进程
-            if (childrenPids != null && childrenPids.size() > 0) {
-                for (ProcessInfo process: childrenPids) {
-                    if (process.getPid() == pid) {
-                        packageName = app + (StringUtil.equals(process.getProcessName(), "main") ? "" : ":" + process.getProcessName());
-                        break;
+                // 通过pid找下实际的子进程，没找到就直接用主进程
+                if (childrenPids != null && childrenPids.size() > 0) {
+                    for (ProcessInfo process : childrenPids) {
+                        if (process.getPid() == pid) {
+                            packageName = app + (StringUtil.equals(process.getProcessName(), "main") ? "" : ":" + process.getProcessName());
+                            break;
+                        }
                     }
                 }
+
+                LogUtil.d(TAG, "Target process: %s", packageName);
+
+                topActivityAndPackage = new String[]{activity, packageName};
+                topActivity = activity;
+
+            } else {
+                topActivityAndPackage = new String[0];
             }
-
-            LogUtil.d(TAG, "Target process: %s", packageName);
-
-            topActivityAndPackage = new String[]{activity, packageName};
-
         } else {
-            topActivityAndPackage = new String[0];
+            String cmd = "dumpsys window windows | grep \"ACTIVITY " + app + "\"";
+            // 每行一个Activity，切换界面时可能存在多个Activity，无法用上一行的task，可能是自定义的
+            String trimmed = CmdTools.execHighPrivilegeCmd(cmd, 500).trim();
+
+            String[] pidContent = trimmed.split("\\s*\n+\\s*");
+            if (pidContent.length > 1 && pidContent[1].contains("Session{")) {
+                String[] originActivityName = pidContent[0].split("\\s+");
+                String[] topActivityOrigin = originActivityName[originActivityName.length - 1].split("/");
+
+                LogUtil.i(TAG, "Activity:" + Arrays.toString(topActivityOrigin));
+                // 针对Activity是以"."开头的相对定位路径
+                String mActivity = topActivityOrigin[1];
+                // 尾缀fix
+                if (mActivity.contains("}")) {
+                    mActivity = mActivity.split("\\}")[0];
+                }
+
+                if (StringUtil.startWith(mActivity, ".")) {
+                    mActivity = topActivityOrigin[0] + mActivity;
+                }
+                String activity = topActivityOrigin[0] + "/" + mActivity;
+                String packageName = app;
+
+                String pidStr = pidContent[1].split("\\s+")[3];
+                if (pidStr.contains(":")) {
+                    pidStr = pidStr.split("\\:")[0];
+                }
+                LogUtil.i(TAG, "Get pid info：" + pidStr) ;
+                // 记录过滤PID
+                // 确定下pid
+                int pid = Integer.parseInt(pidStr);
+                // 通过pid找下实际的子进程，没找到就直接用主进程
+                if (childrenPids != null && childrenPids.size() > 0) {
+                    for (ProcessInfo process : childrenPids) {
+                        if (process.getPid() == pid) {
+                            packageName = app + (StringUtil.equals(process.getProcessName(), "main") ? "" : ":" + process.getProcessName());
+                            break;
+                        }
+                    }
+                }
+
+                // 拼接会完整名称
+                topActivity = activity;
+                topActivityAndPackage = new String[]{activity, packageName};
+            } else {
+                topActivityAndPackage = new String[0];
+            }
         }
 
         if (topActivityAndPackage.length == 2) {
@@ -261,6 +316,9 @@ public class FpsUtil {
     private FpsDataWrapper loadFpsDataForProc(String activity, String processName) {
         String result;
         long startTime = System.currentTimeMillis();
+        if (FPS_PERIOD == null) {
+            loadDeviceScreenInfo();
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
@@ -374,16 +432,16 @@ public class FpsUtil {
                 LogUtil.e(TAG, "Catch NumberFormatException: " + e.getMessage(), e);
             }
             float maxJank = 0;
-            int leftFrame = 60;
+            int leftFrame = FRAME_PER_SECOND;
             int jankFrame = 0;
             int totalCount = 0;
             int jankCount = 0;
 
-            // 从最后一位向上计数，直到耗时满足60帧
+            // 从最后一位向上计数，直到耗时满足满帧
             for (int position = jankList.size() - 1; position > -1; position--) {
                 float jankTime = jankList.get(position);
                 totalCount++;
-                int count = (int) Math.ceil(jankTime * 1000 / fpsPeriod);
+                int count = (int) Math.ceil(jankTime * 1000 / FPS_PERIOD);
                 if (jankTime > maxJank) {
                     maxJank = jankTime;
                 }
@@ -406,7 +464,7 @@ public class FpsUtil {
                 return new FpsDataWrapper(processName, activity, 0, 0, 0, 0, null, null);
             }
 
-            return new FpsDataWrapper(processName, activity, 60 - jankFrame, jankCount, (int) maxJank, jankCount / (float) totalCount * 100, null, null);
+            return new FpsDataWrapper(processName, activity, FRAME_PER_SECOND - jankFrame, jankCount, (int) maxJank, jankCount / (float) totalCount * 100, null, null);
         } else {
             result = CmdTools.execAdbCmd("dumpsys gfxinfo " + processName + " framestats| grep '" + activity + "' -A280", 1000);
 
@@ -492,11 +550,11 @@ public class FpsUtil {
             int jankVsyncCount = 0;
 
             int position;
-            // 从最后一位向上计数，直到耗时满足60帧
+            // 从最后一位向上计数，直到耗时满足满帧
             for (position = lastPos; position > -1 && startRenderTimes.get(position) > filter; position--) {
                 long jankTime = endRenderTimes.get(position) - startRenderTimes.get(position);
                 totalCount++;
-                int count = (int) Math.ceil(jankTime / fpsPeriod);
+                int count = (int) Math.ceil(jankTime / FPS_PERIOD);
                 if (jankTime > maxJank) {
                     maxJank = jankTime;
                 }
@@ -507,9 +565,31 @@ public class FpsUtil {
             }
 
             // 可能存在只有一部分数据的情况
-            int fps = jankVsyncCount < 60?  60 - jankVsyncCount + totalCount: totalCount;
+            int fps = jankVsyncCount < FRAME_PER_SECOND?  FRAME_PER_SECOND - jankVsyncCount + totalCount: totalCount;
 
             return new FpsDataWrapper(processName, activity, fps, jankCount, (int) Math.ceil(maxJank / 1000F), jankCount / (float) totalCount * 100, startRenderTimes, endRenderTimes);
+        }
+    }
+
+    /**
+     * 加载设备屏幕信息
+     */
+    private static void loadDeviceScreenInfo() {
+        String result = CmdTools.execHighPrivilegeCmd("dumpsys SurfaceFlinger --latency com.alipay.hulu");
+        if (!StringUtil.isEmpty(result)) {
+            String firstLine = result.split("\n")[0];
+            try {
+                long frameTime = Long.parseLong(firstLine.trim());
+                FPS_PERIOD = frameTime / 1000D;
+                FRAME_PER_SECOND = (int) (1000000000 / frameTime);
+            } catch (NumberFormatException e) {
+                LogUtil.e(TAG, "Can't resolve text: " + firstLine, e);
+                FPS_PERIOD = 16666D;
+                FRAME_PER_SECOND = 60;
+            }
+        } else {
+            FPS_PERIOD = 16666D;
+            FRAME_PER_SECOND = 60;
         }
     }
 

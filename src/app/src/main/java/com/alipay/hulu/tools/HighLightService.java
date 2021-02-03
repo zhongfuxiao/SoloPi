@@ -47,14 +47,14 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 
 	private static final String TAG = "HighLightService";
 
-	private static int WINDOW_LEVEL = WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
+	private static int WINDOW_LEVEL = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY: WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
 
 	Context cx = null;
 	private WeakReference<View> windowViewRef = null;
 	private WindowManager wm;
 	public Handler mHandler;
 
-	public View unvisiableView;
+	public View invisibleView;
 
 	@Override
 	public void onCreate(Context context) {
@@ -63,18 +63,19 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 
 		mHandler = new Handler();
 
-		unvisiableView = new View(cx);
+		invisibleView = new View(cx);
 		int targetColor;
 		if (Build.VERSION.SDK_INT >= 23) {
 			targetColor = context.getColor(R.color.colorAccent);
 		} else {
 			targetColor = context.getResources().getColor(R.color.colorAccent);
 		}
-		unvisiableView.setBackgroundColor(targetColor);
+		invisibleView.setBackgroundColor(targetColor);
 		WindowManager.LayoutParams params = new WindowManager.LayoutParams();
 		//创建非模态、不可碰触
 		params.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-				|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+				| WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+				| WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
 		//放在左上角
 		params.gravity = Gravity.START | Gravity.TOP;
 		params.height = 1;
@@ -83,12 +84,12 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 		params.type = WINDOW_LEVEL;
 
 		try {
-			wm.addView(unvisiableView, params);
+			wm.addView(invisibleView, params);
 		} catch (WindowManager.BadTokenException e) {
 			LogUtil.e(TAG, e, "无法使用Window type = %d, 降级", WINDOW_LEVEL);
 			WINDOW_LEVEL = TYPE_TOAST;
 			params.type = WINDOW_LEVEL;
-			wm.addView(unvisiableView, params);
+			wm.addView(invisibleView, params);
 		}
 	}
 
@@ -99,6 +100,8 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 		}
 		this.cx = null;
 		this.mHandler = null;
+
+		wm.removeViewImmediate(invisibleView);
 	}
 
 	/**
@@ -110,7 +113,12 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 		mHandler.post(new Runnable() {
 			@Override
 			public void run() {
-				makeWindow(displayRect, point);
+				try {
+					makeWindow(displayRect, point);
+				} catch (Throwable t) {
+					// 闪退避免
+					LogUtil.e(TAG, "抛出异常: " + t.getMessage(), t);
+				}
 			}
 		});
 	}
@@ -130,7 +138,9 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 
 		// 拿一下高亮框引用
 		View windowView;
+		boolean update = true;
 		if (windowViewRef == null || (windowView = windowViewRef.get())== null) {
+			update = false;
 			windowView = LayoutInflater.from(cx).inflate(R.layout.highlight_win, null);
 			windowView.setOnTouchListener(this);
 			windowViewRef = new WeakReference<>(windowView);
@@ -157,12 +167,14 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 
 		// 记录下状态栏高度
 		int[] xAndY = new int[] {0, 0};
-		unvisiableView.getLocationOnScreen(xAndY);
+		invisibleView.getLocationOnScreen(xAndY);
 
 		// 设置下windowParam
 		WindowManager.LayoutParams wmParams = ((MyApplication) cx.getApplicationContext()).getMywmParams();
-		wmParams.type = WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
-		wmParams.flags |= 8;
+		wmParams.type = WINDOW_LEVEL;
+		wmParams.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+				| WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+				| WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
 		wmParams.gravity = Gravity.LEFT | Gravity.TOP; // 调整悬浮窗口至左上角
 		// 以屏幕左上角为原点，设置x、y初始值
 		wmParams.x = displayRect.left - xAndY[0];
@@ -173,9 +185,14 @@ public class HighLightService implements ExportService, View.OnTouchListener {
 		wmParams.format = PixelFormat.RGBA_8888;
 
 		try {
-			wm.addView(windowView, wmParams);
+			if (update) {
+				wm.updateViewLayout(windowView, wmParams);
+			} else {
+				wm.addView(windowView, wmParams);
+			}
 		} catch (WindowManager.BadTokenException e) {
 			LogUtil.e(TAG, "系统不允许显示悬浮窗", e);
+			wm.removeView(windowView);
 		} catch (IllegalStateException e) {
 			LogUtil.e(TAG, "悬浮窗已加载", e);
 			wm.removeView(windowView);

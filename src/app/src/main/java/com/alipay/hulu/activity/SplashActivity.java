@@ -16,7 +16,10 @@
 package com.alipay.hulu.activity;
 
 import android.Manifest;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -34,25 +37,60 @@ import java.util.Arrays;
 
 public class SplashActivity extends BaseActivity {
 	private Handler handler;
+	private static final String DISPLAY_ALERT_INFO = "displayAlertInfo";
 
 	@Override
 	public void onCreate(Bundle savedInstanceState){
 		super.onCreate(savedInstanceState);
 		handler = new Handler();
 		setContentView(R.layout.splash);
+
+		// 如果有自定义目录
+		String baseDir = SPService.getString(SPService.KEY_BASE_DIR);
+		if (!StringUtil.isEmpty(baseDir)) {
+			FileUtils.setSolopiBaseDir(baseDir);
+		}
+
+		// 免责弹窗
+		boolean showDisplay = SPService.getBoolean(DISPLAY_ALERT_INFO, true);
+		if (showDisplay) {
+			AlertDialog dialog = new AlertDialog.Builder(this).setTitle(R.string.index__disclaimer)
+					.setMessage(R.string.disclaimer)
+					.setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
+						@Override
+						public void onClick(DialogInterface dialog, int which) {
+							processPemission();
+							dialog.dismiss();
+						}
+					}).setNegativeButton(R.string.constant__no_inform, new DialogInterface.OnClickListener() {
+				@Override
+				public void onClick(DialogInterface dialog, int which) {
+					SPService.putBoolean(DISPLAY_ALERT_INFO, false);
+					processPemission();
+					dialog.dismiss();
+				}
+			}).setCancelable(false).create();
+			dialog.setCanceledOnTouchOutside(false);
+			dialog.show();
+		} else {
+			processPemission();
+		}
 	}
 
 	/**
 	 * 写权限后续步骤
 	 */
-	private void afterWritePermission() {
+	private void afterWritePermission(boolean noStart) {
 		FileUtils.getSolopiDir();
 
 		Intent intent = new Intent(SplashActivity.this, IndexActivity.class);
+		if (noStart) {
+			intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+		}
 		// 已经初始化完毕过了，直接进入主页
 		if (LauncherApplication.getInstance().hasFinishInit()) {
 			startActivity(intent);
-			finish();
+			laterFinish();
 		} else {
 			// 新启动进闪屏页2s
 			waitForAppInitialize();
@@ -76,21 +114,23 @@ public class SplashActivity extends BaseActivity {
 						Intent intent = new Intent(SplashActivity.this,
 								IndexActivity.class);
 						startActivity(intent);
-						SplashActivity.this.finish();
+						laterFinish();
 					}
 				});
 			}
 		});
 	}
 
-	@Override
-	protected void onStart() {
-		super.onStart();
-
+	private void processPemission() {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
 			// 如果不存储在/sdcard/solopi，说明已经降级到外置私有目录下了
 			if (!StringUtil.equals(SPService.getString(SPService.KEY_SOLOPI_PATH_NAME, "solopi"), "solopi")) {
-				afterWritePermission();
+				afterWritePermission(true);
+				return;
+			}
+
+			if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+				afterWritePermission(true);
 				return;
 			}
 
@@ -99,7 +139,7 @@ public class SplashActivity extends BaseActivity {
 				@Override
 				public void onPermissionResult(boolean result, String reason) {
 					if (result) {
-						afterWritePermission();
+						afterWritePermission(false);
 					} else {
 						// 再申请一次
 						PermissionUtil.requestPermissions(Arrays.asList(Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE), SplashActivity.this, new PermissionUtil.OnPermissionCallback() {
@@ -110,14 +150,14 @@ public class SplashActivity extends BaseActivity {
 									FileUtils.fallBackToExternalDir(SplashActivity.this);
 								}
 
-								afterWritePermission();
+								afterWritePermission(false);
 							}
 						});
 					}
 				}
 			});
 		} else {
-			afterWritePermission();
+			afterWritePermission(true);
 		}
 	}
 
@@ -137,8 +177,20 @@ public class SplashActivity extends BaseActivity {
 				Intent intent = new Intent(SplashActivity.this,
 						IndexActivity.class);
 				startActivity(intent);
-				SplashActivity.this.finish();
+				laterFinish();
 			}
 		}, 1000);
+	}
+
+	/**
+	 * 稍后结束
+	 */
+	private void laterFinish() {
+		handler.postDelayed(new Runnable() {
+			@Override
+			public void run() {
+				SplashActivity.this.finish();
+			}
+		}, 500);
 	}
 }

@@ -18,18 +18,18 @@
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:paddingLeft="8dp"
-    android:paddingRight="8dp"
-    android:paddingTop="8dp"
-    android:paddingBottom="8dp">
+    android:paddingLeft="@dimen/control_dp8"
+    android:paddingRight="@dimen/control_dp8"
+    android:paddingTop="@dimen/control_dp8"
+    android:paddingBottom="@dimen/control_dp8">
     <TextView
         android:id="@+id/case_step_edit_select_hint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="边界"
+        android:text="@string/case_step_edit__scope"
         style="@style/TextView.InputLabel"
         />
-    <android.support.v7.widget.AppCompatSpinner
+    <androidx.appcompat.widget.AppCompatSpinner
         android:id="@+id/case_step_edit_select_spinner"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -37,7 +37,7 @@
         tools:listitem="@layout/item_case_step"
         style="@style/Widget.AppCompat.Spinner.Underlined"
         >
-    </android.support.v7.widget.AppCompatSpinner>
+    </androidx.appcompat.widget.AppCompatSpinner>
 
 
 </LinearLayout>

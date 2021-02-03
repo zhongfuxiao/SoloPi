@@ -25,8 +25,8 @@ import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
-import android.support.annotation.Nullable;
-import android.support.v7.widget.AppCompatImageView;
+import androidx.annotation.Nullable;
+import androidx.appcompat.widget.AppCompatImageView;
 import android.util.AttributeSet;
 
 import com.alipay.hulu.R;
@@ -123,7 +123,7 @@ public class ReverseImageView extends AppCompatImageView {
      */
     private static Bitmap getBitmap(Context context,int vectorDrawableId) {
         Bitmap bitmap;
-        if (Build.VERSION.SDK_INT>Build.VERSION_CODES.LOLLIPOP){
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP){
             Drawable vectorDrawable = context.getDrawable(vectorDrawableId);
             bitmap = Bitmap.createBitmap(vectorDrawable.getIntrinsicWidth(),
                     vectorDrawable.getIntrinsicHeight(), Bitmap.Config.ARGB_8888);

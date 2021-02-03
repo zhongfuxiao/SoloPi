@@ -20,8 +20,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
@@ -36,7 +36,6 @@ import com.alipay.hulu.common.injector.provider.Param;
 import com.alipay.hulu.common.injector.provider.Provider;
 import com.alipay.hulu.common.service.SPService;
 import com.alipay.hulu.common.tools.BackgroundExecutor;
-import com.alipay.hulu.common.utils.ContextUtil;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.StringUtil;
 import com.alipay.hulu.shared.display.DisplayItemInfo;
@@ -255,7 +254,7 @@ public class DisplayManager {
         final Map<RecordPattern, List<RecordPattern.RecordItem>> result = provider.stopRecording();
 
         binder.provideDisplayView(provideMainView(binder.loadServiceContext()),
-                new LinearLayout.LayoutParams(ContextUtil.dip2px(binder.loadServiceContext(), 280),
+                new LinearLayout.LayoutParams(binder.loadServiceContext().getResources().getDimensionPixelSize(R.dimen.control_float_title_width),
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         final String uploadUrl = SPService.getString(SPService.KEY_PERFORMANCE_UPLOAD, null);
@@ -267,10 +266,10 @@ public class DisplayManager {
                     File folder = RecordUtil.saveToFile(result);
 
                     // 显示提示框
-                    LauncherApplication.getInstance().showDialog(binder.loadServiceContext(), "录制数据已经保存到\"" + folder.getPath() + "\"下" , "确定", null);
+                    LauncherApplication.getInstance().showDialog(binder.loadServiceContext(), StringUtil.getString(R.string.performance__record_save, folder.getPath()) , StringUtil.getString(R.string.constant__confirm), null);
                 } else {
                     String response = RecordUtil.uploadData(uploadUrl, result);
-                    LauncherApplication.getInstance().showDialog(binder.loadServiceContext(), "录制数据已经上传至\"" + uploadUrl + "\"，响应结果: " + response , "确定", null);
+                    LauncherApplication.getInstance().showDialog(binder.loadServiceContext(), StringUtil.getString(R.string.performance__record_upload,  uploadUrl, response), StringUtil.getString(R.string.constant__confirm), null);
                 }
             }
         });
@@ -330,7 +329,7 @@ public class DisplayManager {
 
             // 提供主界面
             binder.provideDisplayView(manager.provideMainView(context),
-                    new LinearLayout.LayoutParams(ContextUtil.dip2px(context, 280),
+                    new LinearLayout.LayoutParams(context.getResources().getDimensionPixelSize(R.dimen.control_float_title_width),
                             ViewGroup.LayoutParams.WRAP_CONTENT));
 
             // 提供扩展界面

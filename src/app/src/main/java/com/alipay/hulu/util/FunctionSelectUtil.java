@@ -17,32 +17,45 @@ package com.alipay.hulu.util;
 
 import android.content.Context;
 import android.content.DialogInterface;
-import android.os.Build;
-import android.support.v7.app.AlertDialog;
-import android.support.v7.widget.AppCompatSpinner;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.PointF;
+import android.graphics.Rect;
+import android.graphics.drawable.BitmapDrawable;
+
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.widget.AppCompatSpinner;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.DisplayMetrics;
 import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
+import com.alibaba.fastjson.JSON;
 import com.alipay.hulu.R;
 import com.alipay.hulu.common.application.LauncherApplication;
+import com.alipay.hulu.common.injector.InjectorService;
+import com.alipay.hulu.common.service.ScreenCaptureService;
 import com.alipay.hulu.common.tools.BackgroundExecutor;
+import com.alipay.hulu.common.tools.CmdTools;
 import com.alipay.hulu.common.utils.ContextUtil;
+import com.alipay.hulu.common.utils.FileUtils;
 import com.alipay.hulu.common.utils.LogUtil;
+import com.alipay.hulu.common.utils.MiscUtil;
 import com.alipay.hulu.common.utils.StringUtil;
 import com.alipay.hulu.shared.node.OperationService;
 import com.alipay.hulu.shared.node.action.Constant;
@@ -53,12 +66,15 @@ import com.alipay.hulu.shared.node.action.RunningModeEnum;
 import com.alipay.hulu.shared.node.action.provider.ActionProviderManager;
 import com.alipay.hulu.shared.node.action.provider.ViewLoadCallback;
 import com.alipay.hulu.shared.node.tree.AbstractNodeTree;
+import com.alipay.hulu.shared.node.utils.BitmapUtil;
 import com.alipay.hulu.shared.node.utils.LogicUtil;
 import com.alipay.hulu.tools.HighLightService;
 import com.alipay.hulu.ui.CheckableRelativeLayout;
 import com.alipay.hulu.ui.FlowRadioGroup;
+import com.alipay.hulu.ui.GesturePadView;
 import com.alipay.hulu.ui.TwoLevelSelectLayout;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,14 +86,16 @@ import java.util.regex.Pattern;
  */
 public class FunctionSelectUtil {
     private static final String TAG = "FunctionSelect";
+    public static final String ACTION_EXTRA = "ACTION_EXTRA";
+
     /**
      * 展示操作界面
      *
      * @param node
      */
     public static void showFunctionView(final Context context, final AbstractNodeTree node,
-                                  final List<String> keys, final List<Integer> icons,
-                                  final Map<String,List<TwoLevelSelectLayout.SubMenuItem>> secondLevel,
+                                  final List<Integer> keys, final List<Integer> icons,
+                                  final Map<Integer,List<TwoLevelSelectLayout.SubMenuItem>> secondLevel,
                                   final HighLightService highLightService,
                                   final OperationService operationService,
                                   final Pair<Float, Float> localClickPos,
@@ -136,6 +154,11 @@ public class FunctionSelectUtil {
                     LogUtil.i(TAG, "Perform Action: " + action);
                     final OperationMethod method = new OperationMethod(
                             PerformActionEnum.getActionEnumByCode(action.key));
+
+                    // 透传一下
+                    if (!StringUtil.isEmpty(action.extra)) {
+                        method.putParam(ACTION_EXTRA, action.extra);
+                    }
 
                     // 添加控件点击位置
                     if (localClickPos != null) {
@@ -204,45 +227,55 @@ public class FunctionSelectUtil {
         PerformActionEnum action = method.getActionEnum();
         if (action == PerformActionEnum.INPUT
                 || action == PerformActionEnum.INPUT_SEARCH
-                || action == PerformActionEnum.LONG_CLICK) {
-            showEditView(node, method, context, listener);
-            return true;
-        } else if (action == PerformActionEnum.MULTI_CLICK
-                || action == PerformActionEnum.SLEEP_UNTIL) {
-            showEditView(node, method, context, listener);
-            return true;
-        } else if (action == PerformActionEnum.SLEEP
-                || action == PerformActionEnum.SCREENSHOT) {
-            showEditView(null, method, context, listener);
-            return true;
-        } else if (action == PerformActionEnum.SCROLL_TO_BOTTOM
+                || action == PerformActionEnum.LONG_CLICK
+                || action == PerformActionEnum.MULTI_CLICK
+                || action == PerformActionEnum.SLEEP_UNTIL
+                || action == PerformActionEnum.SLEEP
+                || action == PerformActionEnum.SCREENSHOT
+                || action == PerformActionEnum.SCROLL_TO_BOTTOM
                 || action == PerformActionEnum.SCROLL_TO_TOP
                 || action == PerformActionEnum.SCROLL_TO_LEFT
-                || action == PerformActionEnum.SCROLL_TO_RIGHT) {
+                || action == PerformActionEnum.SCROLL_TO_RIGHT
+                || action == PerformActionEnum.EXECUTE_SHELL) {
             showEditView(node, method, context, listener);
             return true;
-        } else if (action == PerformActionEnum.ASSERT) {
-            chooseAssertMode(node, PerformActionEnum.ASSERT, context, listener);
+        } else if (action == PerformActionEnum.ASSERT
+                || action == PerformActionEnum.ASSERT_TOAST) {
+            chooseAssertMode(node, action, context, listener);
             return true;
         } else if (action == PerformActionEnum.LET_NODE) {
-            chooseLetMode(node, context, listener);
+            chooseLetMode(node, context, listener, operationService);
             return true;
-        } else if (action == PerformActionEnum.JUMP_TO_PAGE) {
+        } else if (action == PerformActionEnum.LET) {
+            chooseLetGlobalMode(context, listener, operationService);
+            return true;
+        } else if (action == PerformActionEnum.CHECK || action == PerformActionEnum.CHECK_NODE) {
+            chooseCheckMode(node, context, listener, operationService);
+            return true;
+        } else if (action == PerformActionEnum.JUMP_TO_PAGE
+                || action == PerformActionEnum.GENERATE_QR_CODE
+                || action == PerformActionEnum.GENERATE_BAR_CODE
+                || action == PerformActionEnum.LOAD_PARAM) {
             showSelectView(method, context, listener);
             return true;
         } else if (action == PerformActionEnum.CHANGE_MODE) {
             showChangeModeView(context, listener);
-            return true;
-        }else if (action == PerformActionEnum.EXECUTE_SHELL) {
-            showEditView(node, method, context, listener);
             return true;
         } else if (action == PerformActionEnum.WHILE) {
             showWhileView(method, context, listener);
             return true;
         } else if (action == PerformActionEnum.IF) {
             method.putParam(LogicUtil.CHECK_PARAM, "");
+        } else if (action == PerformActionEnum.GESTURE || action == PerformActionEnum.GLOBAL_GESTURE) {
+            captureAndShowGesture(action, node, context, listener);
+            return true;
+        } else if (action == PerformActionEnum.GLOBAL_SCROLL_TO_BOTTOM
+                || action == PerformActionEnum.GLOBAL_SCROLL_TO_TOP
+                || action == PerformActionEnum.GLOBAL_SCROLL_TO_LEFT
+                || action == PerformActionEnum.GLOBAL_SCROLL_TO_RIGHT) {
+            showScrollControlView(method, context, listener);
+            return true;
         }
-
         return false;
     }
 
@@ -255,16 +288,11 @@ public class FunctionSelectUtil {
             final String[] actions = new String[modes.length];
 
             for (int i = 0; i < modes.length; i++) {
-                // API21以下不支持截图模式
-                if (Build.VERSION.SDK_INT < 21 && modes[i] == RunningModeEnum.CAPTURE_MODE) {
-                    continue;
-                }
-
                 actions[i] = modes[i].getDesc();
             }
 
             AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.AppDialogTheme)
-                    .setTitle("请选择要切换的模式")
+                    .setTitle(R.string.function__set_mode)
                     .setSingleChoiceItems(actions, 0, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
@@ -279,7 +307,7 @@ public class FunctionSelectUtil {
                             method.putParam(OperationExecutor.GET_NODE_MODE, modes[which].getCode());
                             listener.onProcessFunction(method, null);
                         }
-                    }).setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                    }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             dialog.dismiss();
@@ -289,13 +317,96 @@ public class FunctionSelectUtil {
                     });
 
             AlertDialog dialog = builder.create();
-            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+            dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
             dialog.setCanceledOnTouchOutside(false);
             dialog.setCancelable(false);
             dialog.show();
         } catch (Exception e) {
             e.printStackTrace();
 
+            listener.onCancel();
+        }
+    }
+
+
+    /**
+     * 展示滑动控制
+     * @param context
+     */
+    private static void showScrollControlView(final OperationMethod method, Context context, final FunctionListener listener) {
+        try {
+            LayoutInflater inflater =  LayoutInflater.from(ContextUtil.getContextThemeWrapper(
+                    context, R.style.AppDialogTheme));
+
+            ScrollView v = (ScrollView) inflater.inflate(R.layout.dialog_setting, null);
+            LinearLayout view = (LinearLayout) v.getChildAt(0);
+
+            LinearLayout.LayoutParams layoutParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+
+            // 对每一个字段添加EditText
+            View editField = inflater.inflate(R.layout.item_edit_field, null);
+
+            final EditText distance = (EditText) editField.findViewById(R.id.item_edit_field_edit);
+            TextView distanceName = (TextView) editField.findViewById(R.id.item_edit_field_name);
+
+            // 配置字段
+            distance.setHint(R.string.scroll_setting__scroll_distense);
+            distanceName.setText(R.string.scroll_setting__scroll_distense);
+            distance.setInputType(InputType.TYPE_CLASS_NUMBER);
+            distance.setText("40");
+
+            // 设置其他参数
+            distance.setTextColor(context.getResources().getColor(R.color.primaryText));
+            distance.setHintTextColor(context.getResources().getColor(R.color.secondaryText));
+            distance.setHighlightColor(context.getResources().getColor(R.color.colorAccent));
+            view.addView(editField, layoutParams);
+
+
+            editField = inflater.inflate(R.layout.item_edit_field, null);
+            final EditText time = (EditText) editField.findViewById(R.id.item_edit_field_edit);
+            TextView timeName = (TextView) editField.findViewById(R.id.item_edit_field_name);
+
+            // 配置字段
+            time.setHint(R.string.scroll_setting__scroll_time);
+            timeName.setText(R.string.scroll_setting__scroll_time);
+            time.setText("1000");
+            time.setInputType(InputType.TYPE_CLASS_NUMBER);
+
+            // 设置其他参数
+            time.setTextColor(context.getResources().getColor(R.color.primaryText));
+            time.setHintTextColor(context.getResources().getColor(R.color.secondaryText));
+            time.setHighlightColor(context.getResources().getColor(R.color.colorAccent));
+            view.addView(editField, layoutParams);
+
+            // 显示Dialog
+            AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
+                    .setTitle(R.string.scroll_setting__set_scroll_param)
+                    .setView(v)
+                    .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            // 获取每个编辑框的文字
+                            dialog.dismiss();
+
+                            method.putParam(OperationExecutor.SCROLL_DISTANCE, distance.getText().toString());
+                            method.putParam(OperationExecutor.SCROLL_TIME, time.getText().toString());
+                            listener.onProcessFunction(method, null);
+                        }
+                    }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    dialog.dismiss();
+                    listener.onCancel();
+                }
+            }).create();
+
+            dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
+            dialog.setCanceledOnTouchOutside(false);
+            dialog.setCancelable(false);
+
+            dialog.show();
+        } catch (Exception e) {
+            LogUtil.e(TAG, "Throw exception: " + e.getMessage(), e);
             listener.onCancel();
         }
     }
@@ -311,25 +422,40 @@ public class FunctionSelectUtil {
             final PerformActionEnum actionEnum = method.getActionEnum();
             View customView = LayoutInflater.from(context).inflate(R.layout.dialog_select_view, null);
             View itemScan = customView.findViewById(R.id.item_scan);
-            View itemUrl = customView.findViewById(R.id.item_url);
+            TextView itemUrl = customView.findViewById(R.id.item_url);
+            if (actionEnum == PerformActionEnum.GENERATE_QR_CODE
+                    || actionEnum == PerformActionEnum.GENERATE_BAR_CODE) {
+                itemUrl.setText(R.string.function__input_code);
+            }
             final AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
                     .setView(customView)
-                    .setTitle("请选择操作方式")
-                    .setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                    .setTitle(R.string.function__select_function)
+                    .setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             dialog.dismiss();
                             listener.onCancel();
                         }
                     }).create();
-            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+            dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
             dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
             dialog.setCancelable(false);
 
             View.OnClickListener _listener = new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    if (actionEnum == PerformActionEnum.JUMP_TO_PAGE) {
+                    if (actionEnum == PerformActionEnum.JUMP_TO_PAGE
+                        || actionEnum == PerformActionEnum.GENERATE_QR_CODE
+                        || actionEnum == PerformActionEnum.GENERATE_BAR_CODE) {
+                        if (v.getId() == R.id.item_scan) {
+                            method.putParam("scan", "1");
+                            listener.onProcessFunction(method, null);
+                        } else if (v.getId() == R.id.item_url) {
+                            dialog.dismiss();
+                            showUrlEditView(method, context, listener);
+                            return;
+                        }
+                    } else if (actionEnum == PerformActionEnum.LOAD_PARAM) {
                         if (v.getId() == R.id.item_scan) {
                             method.putParam("scan", "1");
                             listener.onProcessFunction(method, null);
@@ -367,12 +493,19 @@ public class FunctionSelectUtil {
         final PerformActionEnum actionEnum = method.getActionEnum();
         View v = LayoutInflater.from(ContextUtil.getContextThemeWrapper(context, R.style.AppDialogTheme)).inflate(R.layout.dialog_record_name, null);
         final EditText edit = (EditText) v.findViewById(R.id.dialog_record_edit);
-        edit.setHint("请输入url");
+        edit.setHint(R.string.function__please_input_url);
+        if (actionEnum == PerformActionEnum.GENERATE_QR_CODE
+                || actionEnum == PerformActionEnum.GENERATE_BAR_CODE) {
+            edit.setHint(R.string.function__please_input_qr_code);
+        }
+
+        int title = (actionEnum == PerformActionEnum.GENERATE_QR_CODE
+                || actionEnum == PerformActionEnum.GENERATE_BAR_CODE)? R.string.function__input_qr_code: R.string.function__input_url;
 
         AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
-                .setTitle("请输入url")
+                .setTitle(title)
                 .setView(v)
-                .setPositiveButton("输入", new DialogInterface.OnClickListener() {
+                .setPositiveButton(R.string.function__input, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         LogUtil.i(TAG, "Positive " + which);
@@ -380,14 +513,21 @@ public class FunctionSelectUtil {
 
                         dialog.dismiss();
 
-                        if (actionEnum == PerformActionEnum.JUMP_TO_PAGE) {
+                        if (actionEnum == PerformActionEnum.JUMP_TO_PAGE
+                            || actionEnum == PerformActionEnum.GENERATE_QR_CODE
+                            || actionEnum == PerformActionEnum.GENERATE_BAR_CODE) {
 
                             // 向handler发送请求
                             method.putParam(OperationExecutor.SCHEME_KEY, data);
                             listener.onProcessFunction(method, null);
+                        } else if (actionEnum == PerformActionEnum.LOAD_PARAM) {
+                            method.putParam(OperationExecutor.APP_URL_KEY, data);
+
+                            // 向handler发送请求
+                            listener.onProcessFunction(method, null);
                         }
                     }
-                }).setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
 
@@ -395,7 +535,7 @@ public class FunctionSelectUtil {
                         listener.onCancel();
                     }
                 }).create();
-        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+        dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
         dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
         dialog.setCancelable(false);
         dialog.show();
@@ -408,7 +548,7 @@ public class FunctionSelectUtil {
      * @param listener
      */
     private static void chooseLetMode(AbstractNodeTree node, final Context context,
-                                      final FunctionListener listener) {
+                                      final FunctionListener listener, final OperationService service) {
         if (node == null) {
             LogUtil.e(TAG, "Receive null node, can't let value");
 
@@ -454,6 +594,58 @@ public class FunctionSelectUtil {
                 R.id.dialog_action_let_other);
         final EditText valExpr = (EditText) otherWrapper.findViewById(R.id.dialog_action_let_other_value);
         final RadioGroup valType = (RadioGroup) otherWrapper.findViewById(R.id.dialog_action_let_other_type);
+        final TextView valVal = (TextView) otherWrapper.findViewById(R.id.dialog_action_let_other_value_val);
+        final AbstractNodeTree finalNode = node;
+        valType.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(RadioGroup group, int checkedId) {
+                if (service != null) {
+                    String expr = valExpr.getText().toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        return;
+                    }
+
+                    String val = LogicUtil.eval(expr, finalNode, checkedId == R.id.dialog_action_let_other_type_int ?
+                            LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                    if (val != null) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, val));
+                    } else {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    }
+                }
+            }
+        });
+        valExpr.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (service != null) {
+                    String expr = s.toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        return;
+                    }
+
+                    String val = LogicUtil.eval(expr, finalNode, valType.getCheckedRadioButtonId() == R.id.dialog_action_let_other_type_int ?
+                            LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                    if (val != null) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, val));
+                    } else {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    }
+                }
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+
+            }
+        });
 
         final CheckableRelativeLayout[] previous = {textWrapper};
         final String[] valValue = { "${node.text}" };
@@ -502,11 +694,10 @@ public class FunctionSelectUtil {
 
         final EditText valName = (EditText) letView.findViewById(R.id.dialog_action_let_variable_name);
 
-        final AbstractNodeTree finalNode = node;
         AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
-                .setTitle("请设置变量值")
+                .setTitle(R.string.function__set_variable)
                 .setView(letView)
-                .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         LogUtil.i(TAG, "Positive " + which);
@@ -527,6 +718,226 @@ public class FunctionSelectUtil {
 
                         listener.onProcessFunction(method, finalNode);
                     }
+                }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+
+                        dialog.dismiss();
+                        listener.onCancel();
+                    }
+                }).create();
+        dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
+        dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
+        dialog.setCancelable(false);
+        dialog.show();
+    }
+
+
+
+    /**
+     * 动态赋值选择框
+     * @param context
+     * @param listener
+     */
+    private static void chooseCheckMode(AbstractNodeTree node, final Context context,
+                                            final FunctionListener listener, final OperationService service) {
+
+        // 如果是TextView外面包装的一层，解析内部的TextView
+        if (node != null) {
+            if (node.getChildrenNodes() != null && node.getChildrenNodes().size() == 1) {
+                AbstractNodeTree child = node.getChildrenNodes().get(0);
+
+                if (StringUtil.equals(child.getClassName(), "android.widget.TextView")) {
+                    node = child;
+                }
+            }
+        }
+
+        final AbstractNodeTree finalNode = node;
+
+        // 获取页面
+        View checkView = LayoutInflater.from(ContextUtil.getContextThemeWrapper(context,
+                R.style.AppDialogTheme)).inflate(R.layout.dialog_action_check_global, null);
+        final EditText leftExpr = (EditText) checkView.findViewById(R.id.dialog_action_check_left_value);
+        final TextView leftVal = (TextView) checkView.findViewById(R.id.dialog_action_check_left_value_val);
+        final EditText rightExpr = (EditText) checkView.findViewById(R.id.dialog_action_check_right_value);
+        final TextView rightVal = (TextView) checkView.findViewById(R.id.dialog_action_check_right_value_val);
+
+        final RadioGroup valType = (RadioGroup) checkView.findViewById(R.id.dialog_action_check_type);
+        final RadioGroup compareType = (RadioGroup) checkView.findViewById(R.id.dialog_action_check_compare);
+
+        final RadioButton bigger = (RadioButton) compareType.findViewById(R.id.dialog_action_check_compare_bigger);
+        final RadioButton biggerEqual = (RadioButton) compareType.findViewById(R.id.dialog_action_check_compare_bigger_equal);
+        final RadioButton less = (RadioButton) compareType.findViewById(R.id.dialog_action_check_compare_less);
+        final RadioButton lessEqual = (RadioButton) compareType.findViewById(R.id.dialog_action_check_compare_less_equal);
+
+        valType.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(RadioGroup group, int checkedId) {
+                if (service != null) {
+                    String expr = leftExpr.getText().toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        leftVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    } else {
+                        String val = LogicUtil.eval(expr, finalNode, checkedId == R.id.dialog_action_check_type_int ?
+                                LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                        if (val != null) {
+                            leftVal.setText(context.getString(R.string.action_let_cur_value, val));
+                        } else {
+                            leftVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        }
+                    }
+
+                    expr = rightExpr.getText().toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        rightVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    } else {
+                        String val = LogicUtil.eval(expr, finalNode, checkedId == R.id.dialog_action_check_type_int ?
+                                LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                        if (val != null) {
+                            rightVal.setText(context.getString(R.string.action_let_cur_value, val));
+                        } else {
+                            rightVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        }
+                    }
+                }
+
+                if (checkedId == R.id.dialog_action_check_type_str) {
+                    bigger.setEnabled(false);
+                    biggerEqual.setEnabled(false);
+                    less.setEnabled(false);
+                    lessEqual.setEnabled(false);
+                } else {
+                    bigger.setEnabled(true);
+                    biggerEqual.setEnabled(true);
+                    less.setEnabled(true);
+                    lessEqual.setEnabled(true);
+                }
+
+            }
+        });
+        leftExpr.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (service != null) {
+                    String expr = s.toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        leftVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        return;
+                    }
+
+                    String val = LogicUtil.eval(expr, finalNode, valType.getCheckedRadioButtonId() == R.id.dialog_action_check_type_int ?
+                            LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                    if (val != null) {
+                        leftVal.setText(context.getString(R.string.action_let_cur_value, val));
+                    } else {
+                        leftVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    }
+                }
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+
+            }
+        });
+
+        rightExpr.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (service != null) {
+                    String expr = s.toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        rightVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        return;
+                    }
+
+                    String val = LogicUtil.eval(expr, finalNode, valType.getCheckedRadioButtonId() == R.id.dialog_action_check_type_int ?
+                            LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                    if (val != null) {
+                        rightVal.setText(context.getString(R.string.action_let_cur_value, val));
+                    } else {
+                        rightVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    }
+                }
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+
+            }
+        });
+
+        AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
+                .setTitle("请设置比较内容")
+                .setView(checkView)
+                .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        LogUtil.i(TAG, "Positive " + which);
+                        String leftVal = leftExpr.getText().toString();
+                        String rightVal = rightExpr.getText().toString();
+                        int targetValType = valType.getCheckedRadioButtonId() == R.id.dialog_action_check_type_int?
+                                LogicUtil.ALLOC_TYPE_INTEGER: LogicUtil.ALLOC_TYPE_STRING;
+
+                        dialog.dismiss();
+                        OperationMethod method;
+                        if (finalNode != null) {
+                            method = new OperationMethod(PerformActionEnum.CHECK_NODE);
+                        } else {
+                            method = new OperationMethod(PerformActionEnum.CHECK);
+                        }
+
+                        String connector;
+                        int id = compareType.getCheckedRadioButtonId();
+                        if (targetValType == LogicUtil.ALLOC_TYPE_INTEGER) {
+                            if (id == R.id.dialog_action_check_compare_equal) {
+                                connector = "==";
+
+                            } else if (id == R.id.dialog_action_check_compare_no_equal) {
+                                connector = "<>";
+
+                            } else if (id == R.id.dialog_action_check_compare_bigger) {
+                                connector = ">";
+
+                            } else if (id == R.id.dialog_action_check_compare_bigger_equal) {
+                                connector = ">=";
+
+                            } else if (id == R.id.dialog_action_check_compare_less) {
+                                connector = "<";
+
+                            } else if (id == R.id.dialog_action_check_compare_less_equal) {
+                                connector = "<=";
+                            } else {
+                                LogUtil.w(TAG, "Can't recognize type " + targetValType);
+                                listener.onCancel();
+                                return;
+                            }
+                        } else {
+                            if (id == R.id.dialog_action_check_compare_equal) {
+                                connector = "=";
+
+                            } else if (id == R.id.dialog_action_check_compare_no_equal) {
+                                connector = "!=";
+                            } else {
+                                LogUtil.w(TAG, "Can't recognize type " + targetValType);
+                                listener.onCancel();
+                                return;
+                            }
+                        }
+                        method.putParam(LogicUtil.CHECK_PARAM, leftVal + connector + rightVal);
+                        listener.onProcessFunction(method, finalNode);
+                    }
                 }).setNegativeButton("取消", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
@@ -535,7 +946,108 @@ public class FunctionSelectUtil {
                         listener.onCancel();
                     }
                 }).create();
-        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+        dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
+        dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
+        dialog.setCancelable(false);
+        dialog.show();
+    }
+
+    /**
+     * 动态赋值选择框
+     * @param context
+     * @param listener
+     */
+    private static void chooseLetGlobalMode(final Context context,
+                                      final FunctionListener listener, final OperationService service) {
+
+        // 获取页面
+        View letView = LayoutInflater.from(ContextUtil.getContextThemeWrapper(context,
+                R.style.AppDialogTheme)).inflate(R.layout.dialog_action_let_global, null);
+        final EditText valExpr = (EditText) letView.findViewById(R.id.dialog_action_let_other_value);
+        final RadioGroup valType = (RadioGroup) letView.findViewById(R.id.dialog_action_let_other_type);
+        final TextView valVal = (TextView) letView.findViewById(R.id.dialog_action_let_other_value_val);
+        valType.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(RadioGroup group, int checkedId) {
+                if (service != null) {
+                    String expr = valExpr.getText().toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        return;
+                    }
+
+                    String val = LogicUtil.eval(expr, null, checkedId == R.id.dialog_action_let_other_type_int ?
+                            LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                    if (val != null) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, val));
+                    } else {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    }
+                }
+            }
+        });
+        valExpr.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (service != null) {
+                    String expr = s.toString();
+                    if (StringUtil.isEmpty(expr)) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                        return;
+                    }
+
+                    String val = LogicUtil.eval(expr, null, valType.getCheckedRadioButtonId() == R.id.dialog_action_let_other_type_int ?
+                            LogicUtil.ALLOC_TYPE_INTEGER : LogicUtil.ALLOC_TYPE_STRING, service);
+                    if (val != null) {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, val));
+                    } else {
+                        valVal.setText(context.getString(R.string.action_let_cur_value, "-"));
+                    }
+                }
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+
+            }
+        });
+
+        final EditText valName = (EditText) letView.findViewById(R.id.dialog_action_let_variable_name);
+
+        AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
+                .setTitle("请设置变量值")
+                .setView(letView)
+                .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        LogUtil.i(TAG, "Positive " + which);
+                        String targetValName = valName.getText().toString();
+                        String targetValValue = valExpr.getText().toString();
+                        int targetValType = valType.getCheckedRadioButtonId() == R.id.dialog_action_let_other_type_int?
+                                    LogicUtil.ALLOC_TYPE_INTEGER: LogicUtil.ALLOC_TYPE_STRING;
+
+                        dialog.dismiss();
+                        OperationMethod method = new OperationMethod(PerformActionEnum.LET);
+                        method.putParam(LogicUtil.ALLOC_TYPE, Integer.toString(targetValType));
+                        method.putParam(LogicUtil.ALLOC_VALUE_PARAM, targetValValue);
+                        method.putParam(LogicUtil.ALLOC_KEY_PARAM, targetValName);
+
+                        listener.onProcessFunction(method, null);
+                    }
+                }).setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+
+                        dialog.dismiss();
+                        listener.onCancel();
+                    }
+                }).create();
+        dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
         dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
         dialog.setCancelable(false);
         dialog.show();
@@ -557,10 +1069,14 @@ public class FunctionSelectUtil {
 
             // 判断当前内容是否是数字
             StringBuilder matchTxtBuilder = new StringBuilder();
-            for (AbstractNodeTree item : node) {
-                if (!TextUtils.isEmpty(item.getText())) {
-                    matchTxtBuilder.append(item.getText());
+            if (action == PerformActionEnum.ASSERT) {
+                for (AbstractNodeTree item : node) {
+                    if (!TextUtils.isEmpty(item.getText())) {
+                        matchTxtBuilder.append(item.getText());
+                    }
                 }
+            } else if (action == PerformActionEnum.ASSERT_TOAST) {
+                matchTxtBuilder.append(InjectorService.g().getMessage(com.alipay.hulu.shared.event.constant.Constant.EVENT_TOAST_MSG, String.class));
             }
 
             final int[] selectNumIndex = new int[1];
@@ -575,22 +1091,16 @@ public class FunctionSelectUtil {
                 assertGroup.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
                     @Override
                     public void onCheckedChanged(RadioGroup group, int checkedId) {
-                        switch (checkedId) {
-                            case R.id.ch1:
-                                selectNumIndex[0] = 0;
-                                break;
-                            case R.id.ch2:
-                                selectNumIndex[0] = 1;
-                                break;
-                            case R.id.ch3:
-                                selectNumIndex[0] = 2;
-                                break;
-                            case R.id.ch4:
-                                selectNumIndex[0] = 3;
-                                break;
-                            case R.id.ch5:
-                                selectNumIndex[0] = 4;
-                                break;
+                       if (checkedId == R.id.ch1) {
+                            selectNumIndex[0] = 0;
+                        } else if (checkedId == R.id.ch2) {
+                            selectNumIndex[0] = 1;
+                        } else if (checkedId == R.id.ch3) {
+                            selectNumIndex[0] = 2;
+                        } else if (checkedId == R.id.ch4) {
+                            selectNumIndex[0] = 3;
+                        } else if (checkedId == R.id.ch5) {
+                            selectNumIndex[0] = 4;
                         }
                     }
                 });
@@ -616,10 +1126,10 @@ public class FunctionSelectUtil {
                 });
 
                 AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
-                        .setTitle("输入数字并选择断言模式")
+                        .setTitle(R.string.function__input_number_assert)
                         .setView(content)
-                        .setPositiveButton("确定", null)
-                        .setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                        .setPositiveButton(R.string.constant__confirm, null)
+                        .setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
                                 LogUtil.i(TAG, "Negative " + which);
@@ -640,13 +1150,13 @@ public class FunctionSelectUtil {
                                     param.put(OperationExecutor.ASSERT_INPUT_CONTENT, strResult[0]);
                                     postiveClick(action, node, dialog, param, listener);
                                 } else {
-                                    Toast.makeText(context, "请输入数字", Toast.LENGTH_SHORT).show();
+                                    LauncherApplication.toast(R.string.function__input_number);
                                 }
                             }
                         });
                     }
                 });
-                dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+                dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
                 dialog.setCanceledOnTouchOutside(false);
                 dialog.setCancelable(false);
                 dialog.show();
@@ -664,16 +1174,12 @@ public class FunctionSelectUtil {
                 assertGroup.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
                     @Override
                     public void onCheckedChanged(RadioGroup group, int checkedId) {
-                        switch (checkedId) {
-                            case R.id.ch1:
-                                selectIndex[0] = 0;
-                                break;
-                            case R.id.ch2:
-                                selectIndex[0] = 1;
-                                break;
-                            case R.id.ch3:
-                                selectIndex[0] = 2;
-                                break;
+                        if (checkedId == R.id.ch1) {
+                            selectIndex[0] = 0;
+                        } else if (checkedId == R.id.ch2) {
+                            selectIndex[0] = 1;
+                        } else if (checkedId == R.id.ch3) {
+                            selectIndex[0] = 2;
                         }
                     }
                 });
@@ -696,10 +1202,10 @@ public class FunctionSelectUtil {
                 });
 
                 AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
-                        .setTitle("输入内容并选择断言模式")
+                        .setTitle(R.string.function__input_select_assert)
                         .setView(content)
-                        .setPositiveButton("确定", null)
-                        .setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                        .setPositiveButton(R.string.constant__confirm, null)
+                        .setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
                                 LogUtil.i(TAG, "Negative " + which);
@@ -724,13 +1230,13 @@ public class FunctionSelectUtil {
                                             param, listener);
 
                                 } else {
-                                    Toast.makeText(context, "请输入内容", Toast.LENGTH_SHORT).show();
+                                    LauncherApplication.toast(R.string.function__input_content);
                                 }
                             }
                         });
                     }
                 });
-                dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+                dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
                 dialog.setCanceledOnTouchOutside(false);
                 dialog.setCancelable(false);
                 dialog.show();
@@ -776,53 +1282,60 @@ public class FunctionSelectUtil {
 
         try {
             PerformActionEnum action = method.getActionEnum();
-            String title = "请输入具体内容";
+            String title = StringUtil.getString(R.string.function__input_title);
             View v = LayoutInflater.from(ContextUtil.getContextThemeWrapper(context, R.style.AppDialogTheme)).inflate(R.layout.dialog_record_name, null);
             final EditText edit = (EditText) v.findViewById(R.id.dialog_record_edit);
+            View hide = v.findViewById(R.id.dialog_record_edit_hide);
+            hide.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    hideInput(edit);
+                }
+            });
             final Pattern textPattern;
             if (action == PerformActionEnum.SLEEP) {
-                edit.setHint("sleep时长（单位ms）");
-                title = "请设置Sleep时长";
+                edit.setHint(R.string.function__sleep_time);
+                title = StringUtil.getString(R.string.function__set_sleep_time);
                 textPattern = Pattern.compile("\\d+");
             } else if (action == PerformActionEnum.SCREENSHOT) {
-                edit.setHint("截图名称");
-                title = "请输入截图名称";
+                edit.setHint(R.string.function__screenshot_name);
+                title = StringUtil.getString(R.string.function__set_screenshot_name);
                 textPattern = Pattern.compile("\\S+(.*\\S+)?");
             } else if (action ==PerformActionEnum.MULTI_CLICK) {
-                edit.setHint("点击次数");
-                title = "请输入连续点击次数(1-99次)";
+                edit.setHint(R.string.function__click_time);
+                title = StringUtil.getString(R.string.function__set_click_time);
                 textPattern = Pattern.compile("\\d{1,2}");
             } else if (action ==PerformActionEnum.SLEEP_UNTIL) {
-                edit.setHint("最长等待时间");
+                edit.setHint(R.string.function__max_wait);
                 edit.setText(R.string.default_sleep_time);
-                title = "请输入最长等待时间(单位ms)";
+                title = StringUtil.getString(R.string.function__set_max_wait);
                 textPattern = Pattern.compile("\\d+");
             } else if (action == PerformActionEnum.SCROLL_TO_BOTTOM
                     || action == PerformActionEnum.SCROLL_TO_TOP
                     || action == PerformActionEnum.SCROLL_TO_LEFT
                     || action == PerformActionEnum.SCROLL_TO_RIGHT) {
-                edit.setHint("滑动百分比");
+                edit.setHint(R.string.function__scroll_percent);
                 edit.setText(R.string.default_scroll_percentage);
-                title = "请输入滑动百分比";
+                title = StringUtil.getString(R.string.function__set_scroll_percent);
                 textPattern = Pattern.compile("\\d+");
             } else if (action == PerformActionEnum.EXECUTE_SHELL) {
-                edit.setHint("请输入adb shell命令");
-                title = "请输入shell命令";
+                edit.setHint(R.string.function__adb_cmd);
+                title = StringUtil.getString(R.string.function__set_adb_cmd);
                 textPattern = null;
             } else if (action == PerformActionEnum.LONG_CLICK) {
-                edit.setHint("长按时长");
-                title = "请输入长按时长(单位ms)";
+                edit.setHint(R.string.function__long_press);
+                title = StringUtil.getString(R.string.function__set_long_press);
                 textPattern = Pattern.compile("[1-9]\\d+");
                 edit.setText(R.string.default_long_click_time);
             } else {
-                edit.setHint("具体内容");
+                edit.setHint(R.string.function__input_content);
                 textPattern = null;
             }
 
             final AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
                     .setTitle(title)
                     .setView(v)
-                    .setPositiveButton("输入", new DialogInterface.OnClickListener() {
+                    .setPositiveButton(R.string.function__input, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             LogUtil.i(TAG, "Positive " + which);
@@ -843,7 +1356,7 @@ public class FunctionSelectUtil {
                                 }
                             }, 500);
                         }
-                    }).setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                    }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             LogUtil.i(TAG, "Negative " + which);
@@ -853,7 +1366,7 @@ public class FunctionSelectUtil {
                         }
                     }).create();
 
-            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+            dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
             dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
             dialog.setCancelable(false);
             dialog.show();
@@ -895,6 +1408,15 @@ public class FunctionSelectUtil {
     }
 
     /**
+     * 隐藏输入法
+     * @param editText
+     */
+    private static void hideInput(EditText editText) {
+        InputMethodManager inputMethodManager = (InputMethodManager) editText.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        inputMethodManager.hideSoftInputFromWindow(editText.getWindowToken(), InputMethodManager.HIDE_NOT_ALWAYS);
+    }
+
+    /**
      * 展示WHILE编辑界面
      * @param method
      * @param context
@@ -914,12 +1436,12 @@ public class FunctionSelectUtil {
                 edit.clearComposingText();
 
                 if (position == 0) {
-                    hint.setText("循环次数");
-                    edit.setHint("循环次数");
+                    hint.setText(R.string.function__loop_count);
+                    edit.setHint(R.string.function__loop_count);
                     edit.setInputType(InputType.TYPE_CLASS_NUMBER);
                 } else {
-                    hint.setText("循环条件");
-                    edit.setHint("循环条件");
+                    hint.setText(R.string.function__loop_condition);
+                    edit.setHint(R.string.function__loop_condition);
                     edit.setInputType(InputType.TYPE_CLASS_TEXT);
                 }
             }
@@ -931,9 +1453,9 @@ public class FunctionSelectUtil {
         });
 
         final AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
-                .setTitle("添加循环")
+                .setTitle(R.string.function__add_loop)
                 .setView(v)
-                .setPositiveButton("添加", new DialogInterface.OnClickListener() {
+                .setPositiveButton(R.string.function__add, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         LogUtil.i(TAG, "Positive " + which);
@@ -958,7 +1480,7 @@ public class FunctionSelectUtil {
                             }
                         }, 500);
                     }
-                }).setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         LogUtil.i(TAG, "Negative " + which);
@@ -968,7 +1490,7 @@ public class FunctionSelectUtil {
                     }
                 }).create();
 
-        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+        dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
         dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
         dialog.setCancelable(false);
         dialog.show();
@@ -999,7 +1521,7 @@ public class FunctionSelectUtil {
         AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
                 .setView(view)
                 .setCancelable(false)
-                .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         LogUtil.i(TAG, "Positive " + which);
@@ -1020,7 +1542,7 @@ public class FunctionSelectUtil {
                             listener.onProcessFunction(method, node);
                         }
                     }
-                }).setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         LogUtil.i(TAG, "Negative " + which);
@@ -1037,8 +1559,135 @@ public class FunctionSelectUtil {
 
         dialog.setTitle(null);
         dialog.setCanceledOnTouchOutside(false);
-        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+        dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
         dialog.show();
+    }
+
+    /**
+     * 展示登录信息框
+     * @param action
+     * @param context
+     */
+    private static void captureAndShowGesture(final PerformActionEnum action, final AbstractNodeTree target, Context context, final FunctionListener listener) {
+        try {
+            View v = LayoutInflater.from(ContextUtil.getContextThemeWrapper(context, R.style.AppDialogTheme)).inflate(R.layout.dialog_node_gesture, null);
+            final GesturePadView gesturePadView = (GesturePadView) v.findViewById(R.id.node_gesture_gesture_view);
+            final RadioGroup group = (RadioGroup) v.findViewById(R.id.node_gesture_time_filter);
+            group.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+                @Override
+                public void onCheckedChanged(RadioGroup group, int checkedId) {
+                    int targetTime;
+                    if (checkedId == R.id.node_gesture_time_filter_25) {
+                        targetTime = 25;
+                    } else if (checkedId == R.id.node_gesture_time_filter_50) {
+                        targetTime = 50;
+                    } else if (checkedId == R.id.node_gesture_time_filter_200) {
+                        targetTime = 200;
+                    } else {
+                        targetTime = 100;
+                    }
+                    gesturePadView.setGestureFilter(targetTime);
+                    gesturePadView.clear();
+                }
+            });
+            Bitmap nodeBitmap;
+            if (target != null) {
+                String capture = target.getCapture();
+                if (StringUtil.isEmpty(capture)) {
+                    File captureFile = new File(FileUtils.getSubDir("tmp"), "test.jpg");
+                    Bitmap bitmap = capture(captureFile);
+                    if (bitmap == null) {
+                        LauncherApplication.getInstance().showToast(context.getString(R.string.action_gesture__capture_screen_failed));
+                        listener.onCancel();
+                        return;
+                    }
+
+                    Rect displayRect = target.getNodeBound();
+
+                    nodeBitmap = Bitmap.createBitmap(bitmap, displayRect.left,
+                            displayRect.top, displayRect.width(),
+                            displayRect.height());
+                    target.setCapture(BitmapUtil.bitmapToBase64(nodeBitmap));
+                } else {
+                    nodeBitmap = BitmapUtil.base64ToBitmap(capture);
+                }
+            } else {
+                File captureFile = new File(FileUtils.getSubDir("tmp"), "test.jpg");
+                nodeBitmap = capture(captureFile);
+                if (nodeBitmap == null) {
+                    LauncherApplication.getInstance().showToast(context.getString(R.string.action_gesture__capture_screen_failed));
+                    listener.onCancel();
+                    return;
+                }
+            }
+
+            gesturePadView.setTargetImage(new BitmapDrawable(nodeBitmap));
+
+            AlertDialog dialog = new AlertDialog.Builder(context, R.style.AppDialogTheme)
+                    .setTitle(R.string.gesture__please_record_gesture)
+                    .setView(v)
+                    .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            LogUtil.i(TAG, "Positive " + which);
+                            List<PointF> path = gesturePadView.getGesturePath();
+                            int gestureFilter = gesturePadView.getGestureFilter();
+                            // 拼装参数
+                            // 拼装参数
+                            OperationMethod method = new OperationMethod(action);
+                            method.putParam(OperationExecutor.GESTURE_PATH, JSON.toJSONString(path));
+                            method.putParam(OperationExecutor.GESTURE_FILTER, Integer.toString(gestureFilter));
+
+                            // 隐藏Dialog
+                            dialog.dismiss();
+
+                            listener.onProcessFunction(method, target);
+                        }
+                    }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            LogUtil.i(TAG, "Negative " + which);
+
+                            dialog.dismiss();
+                            listener.onCancel();
+                        }
+                    }).create();
+            dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
+            dialog.setCanceledOnTouchOutside(false);                                   //点击外面区域不会让dialog消失
+            dialog.setCancelable(false);
+            dialog.show();
+
+            dialog.getWindow().setLayout(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT);
+
+        } catch (Exception e) {
+            LogUtil.e(TAG, "Login info dialog throw exception: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 截图
+     * @param captureFile 截图保留文件
+     * @return
+     */
+    private static Bitmap capture(File captureFile) {
+        DisplayMetrics metrics = new DisplayMetrics();
+        ((WindowManager) LauncherApplication.getInstance().getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(metrics);
+
+        ScreenCaptureService captureService = LauncherApplication.service(ScreenCaptureService.class);
+        Bitmap bitmap = captureService.captureScreen(captureFile, metrics.widthPixels, metrics.heightPixels,
+                metrics.widthPixels, metrics.heightPixels);
+        // 原有截图方案失败
+        if (bitmap == null) {
+            String path = FileUtils.getPathInShell(captureFile);
+            CmdTools.execHighPrivilegeCmd("screencap -p \"" + path + "\"");
+            MiscUtil.sleep(1000);
+            bitmap = BitmapFactory.decodeFile(captureFile.getPath());
+            // 长宽不对
+            if (bitmap != null && bitmap.getWidth() != metrics.widthPixels) {
+                bitmap = Bitmap.createScaledBitmap(bitmap, metrics.widthPixels, metrics.heightPixels, false);
+            }
+        }
+        return bitmap;
     }
 
     /**

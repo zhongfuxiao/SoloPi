@@ -15,9 +15,13 @@
  */
 package com.alipay.hulu.shared.node.locater;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.util.DisplayMetrics;
+import android.view.WindowManager;
 
+import com.alipay.hulu.common.application.LauncherApplication;
 import com.alipay.hulu.common.utils.ClassUtil;
 import com.alipay.hulu.common.utils.FileUtils;
 import com.alipay.hulu.common.utils.LogUtil;
@@ -27,9 +31,8 @@ import com.alipay.hulu.shared.node.locater.comparator.ItemComparator;
 import com.alipay.hulu.shared.node.tree.AbstractNodeTree;
 import com.alipay.hulu.shared.node.tree.OperationNode;
 import com.alipay.hulu.shared.node.tree.accessibility.tree.AccessibilityNodeTree;
-import com.alipay.hulu.shared.node.tree.capture.CaptureProvider;
 import com.alipay.hulu.shared.node.tree.capture.CaptureTree;
-import com.alipay.hulu.shared.node.tree.export.OperationStepProvider;
+import com.alipay.hulu.shared.node.tree.export.OperationStepExporter;
 import com.alipay.hulu.shared.node.utils.AssetsManager;
 import com.alipay.hulu.shared.node.utils.BitmapUtil;
 
@@ -72,7 +75,7 @@ public class OperationNodeLocator {
     public static final int FLAG_PARENT = 0x00010000;
 
     /**
-     * 通过类名查找，目前仅对WebView才用这个
+     * 通过类名查找，目前仅对EditText才用这个
      */
     public static final int FLAG_CLASS_NAME = 0x00100000;
 
@@ -87,12 +90,21 @@ public class OperationNodeLocator {
     public static final int FLAG_TEXT = 0X10000000;
 
     public static AbstractNodeTree findAbstractNode(AbstractNodeTree root, OperationNode operationNode) {
+        if (root == null) {
+            return null;
+        }
+
         // 对于Accessibility Node
         if (AccessibilityNodeTree.class.getSimpleName().equals(operationNode.getNodeType())) {
-            return OperationNodeLocator.findAbstractNode(root, operationNode,
-                    OperationNodeLocator.FLAG_XPATH | OperationNodeLocator.FLAG_RESOURCE_ID |
-                            OperationNodeLocator.FLAG_SELF | OperationNodeLocator.FLAG_EXTRA |
-                            OperationNodeLocator.FLAG_TEXT | OperationNodeLocator.FLAG_CHILDNODE);
+            int flags = OperationNodeLocator.FLAG_XPATH | OperationNodeLocator.FLAG_RESOURCE_ID |
+                    OperationNodeLocator.FLAG_SELF | OperationNodeLocator.FLAG_EXTRA |
+                    OperationNodeLocator.FLAG_TEXT | OperationNodeLocator.FLAG_CHILDNODE;
+            // EditText可以通过ClassName查找
+            if (StringUtil.equals(operationNode.getClassName(), "android.widget.EditText")) {
+                flags |= FLAG_CLASS_NAME;
+            }
+
+            return OperationNodeLocator.findAbstractNode(root, operationNode, flags);
         } else if (CaptureTree.class.getSimpleName().equals(operationNode.getNodeType())) {
             if (!(root instanceof CaptureTree)) {
                 return null;
@@ -114,7 +126,7 @@ public class OperationNodeLocator {
      * @return
      */
     public static AbstractNodeTree findNodeByCapture(CaptureTree root, OperationNode node) {
-        String queryBase64 = node.getExtraValue(OperationStepProvider.CAPTURE_IMAGE_BASE64);
+        String queryBase64 = node.getExtraValue(OperationStepExporter.CAPTURE_IMAGE_BASE64);
         if (StringUtil.isEmpty(queryBase64)) {
             return null;
         }
@@ -273,7 +285,7 @@ public class OperationNodeLocator {
                     public boolean isEqual(AbstractNodeTree item) {
 
                         // 包含子节点内容相同，resourceId相同，类名相同
-                        boolean findFlag = StringUtil.equals(item.getClassName(), node.getClassName())
+                        boolean findFlag = StringUtil.equalsOrMatch(node.getClassName(), item.getClassName())
                                 && StringUtil.equalsOrLeftBlank(node.getText(), item.getText())
                                 && StringUtil.equalsOrLeftBlank(node.getDescription(), item.getDescription())
                                 && StringUtil.equalsOrLeftBlank(node.getResourceId(), item.getResourceId());
@@ -290,7 +302,7 @@ public class OperationNodeLocator {
                                 }
                             }
 
-                            findFlag = StringUtil.equals(tmpNode.getClassName(), operationNode.getClassName());
+                            findFlag = StringUtil.equalsOrMatch(operationNode.getClassName(), tmpNode.getClassName());
                         }
 
                         return findFlag;
@@ -307,7 +319,7 @@ public class OperationNodeLocator {
                         }
 
                         // 每一个子节点都辅助定位下
-                        if (StringUtil.equals(current.getClassName(), operationNode.getClassName())) {
+                        if (StringUtil.equalsOrMatch(operationNode.getClassName(), current.getClassName())) {
                             findResult.addItem(current, 2);
                             findCount ++;
                         }
@@ -327,7 +339,7 @@ public class OperationNodeLocator {
                     return StringUtil.equalsOrLeftBlank(operationNode.getText(), item.getText()) &&
                             StringUtil.equalsOrLeftBlank(operationNode.getDescription(), item.getDescription())
                             && StringUtil.equalsOrLeftBlank(operationNode.getResourceId(), item.getResourceId()) &&
-                            StringUtil.equalsOrLeftBlank(operationNode.getClassName(), item.getClassName());
+                            StringUtil.equalsOrMatch(operationNode.getClassName(), item.getClassName());
                 }
             });
 
@@ -618,27 +630,34 @@ public class OperationNodeLocator {
                     return findResult.get(maxPoses.get(0));
                 }
 
+                String screenSize = target.getExtraValue(OperationStepExporter.ORIGIN_SCREEN_SIZE);
+                if (StringUtil.isEmpty(screenSize)) {
+                    return findResult.get(maxPoses.get(0));
+                }
+                String[] split = screenSize.split(",");
+                int x = Integer.parseInt(split[0]);
+                int y = Integer.parseInt(split[1]);
+                float xP = bound.centerX() / (float) x;
+                float yP = bound.centerY() / (float) y;
+
                 List<Rect> rects = new ArrayList<>(maxPoses.size() + 1);
                 for (int pos: maxPoses) {
                     rects.add(findResult.get(pos).getNodeBound());
                 }
 
-                int originX = bound.centerX();
-                int originY = bound.centerY();
-                int originSize = bound.width() * bound.height();
+                DisplayMetrics metrics = new DisplayMetrics();
+                ((WindowManager) LauncherApplication.getInstance().getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(metrics);
 
                 // 根据位置进行打分
                 double minScore = Double.MAX_VALUE;
                 int pos = 0;
                 for (int i = 0; i < rects.size(); i++) {
                     Rect rect = rects.get(i);
-                    int y = rect.centerY();
-                    int x = rect.centerX();
-                    int size = rect.width() * rect.height();
+                    float dy = rect.centerY() / (float) metrics.heightPixels;
+                    float dx = rect.centerX() / (float) metrics.widthPixels;
 
                     // 由两项得分确定，距离和面积差
-                    double score = (Math.sqrt(Math.pow(originX - x, 2) + Math.pow(originY - y, 2)) + 1) * (Math.abs(size - originSize) + 1);
-                    if (score < minScore) {
+                    double score = Math.pow(dx - xP, 2) + Math.pow(dy - yP, 2);                    if (score < minScore) {
                         minScore = score;
                         pos = i;
                     }

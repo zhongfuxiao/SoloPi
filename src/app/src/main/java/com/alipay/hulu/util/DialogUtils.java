@@ -24,15 +24,17 @@ import android.database.DataSetObserver;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
-import android.support.v7.app.AlertDialog;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
+import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.AdapterView;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -50,11 +52,12 @@ import com.alipay.hulu.common.utils.StringUtil;
 import com.alipay.hulu.shared.node.action.PerformActionEnum;
 import com.alipay.hulu.ui.TwoLevelSelectLayout;
 import com.bumptech.glide.RequestBuilder;
-import com.bumptech.glide.RequestBuilder;
 import com.bumptech.glide.RequestManager;
 import com.bumptech.glide.request.RequestOptions;
 
 import java.io.File;
+import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -197,6 +200,7 @@ public class DialogUtils {
             public void run() {
                 ProgressDialog progressDialog = new ProgressDialog(context, R.style.SimpleDialogTheme);
                 progressDialog.setMessage(str);
+                progressDialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
                 progressDialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
                 progressDialog.show();
                 dialogs[0] = progressDialog;
@@ -314,7 +318,7 @@ public class DialogUtils {
             listView.setDividerHeight(0);
 
             final AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.AppDialogTheme)
-                    .setTitle("请选择操作")
+                    .setTitle(R.string.function__select_function)
                     .setView(listView)
                     .setOnCancelListener(new DialogInterface.OnCancelListener() {
                         @Override
@@ -327,7 +331,7 @@ public class DialogUtils {
                 @Override
                 public void run() {
                     final AlertDialog dialog = builder.create();
-                    dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+                    dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
                     dialog.setCanceledOnTouchOutside(true);                                   //点击外面区域不会让dialog消失
                     dialog.setCancelable(true);
 
@@ -450,7 +454,7 @@ public class DialogUtils {
 
         dialog.setTitle(null);
         dialog.setCanceledOnTouchOutside(false);
-        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+        dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
         dialog.show();
     }
 
@@ -462,9 +466,9 @@ public class DialogUtils {
      * @param secondLevels
      * @param callback
      */
-    public static void showLeveledFunctionView(final Context context, final List<String> keys,
+    public static void showLeveledFunctionView(final Context context, final List<Integer> keys,
                                         final List<Integer> icons,
-                                        final Map<String, List<TwoLevelSelectLayout.SubMenuItem>> secondLevels,
+                                        final Map<Integer, List<TwoLevelSelectLayout.SubMenuItem>> secondLevels,
                                         final FunctionViewCallback<TwoLevelSelectLayout.SubMenuItem> callback) {
         if (callback == null) {
             LogUtil.e(TAG,"回调函数为空");
@@ -484,7 +488,7 @@ public class DialogUtils {
         }
 
         // 校验各个key都有对应子菜单
-        for (String key: keys) {
+        for (Integer key: keys) {
             if (!secondLevels.containsKey(key)) {
                 LogUtil.e(TAG, "菜单%s不包含对应子菜单", key);
                 return;
@@ -500,7 +504,7 @@ public class DialogUtils {
                 AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.AppDialogTheme)
                         .setView(layout);
                 final AlertDialog dialog = builder.create();
-                dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+                dialog.getWindow().setType(com.alipay.hulu.common.constant.Constant.TYPE_ALERT);
                 dialog.setCanceledOnTouchOutside(true);                                   //点击外面区域不会让dialog消失
                 dialog.setCancelable(true);
                 dialog.setCustomTitle(null);
@@ -530,9 +534,9 @@ public class DialogUtils {
                 DisplayMetrics metrics = new DisplayMetrics();
                 wm.getDefaultDisplay().getMetrics(metrics);
 
-                // 高度350dp, 宽度250dp
-                int pix = ContextUtil.dip2px(context, 350);
-                int width = ContextUtil.dip2px(context, 250);
+                // 高度400dp, 宽度260dpa
+                int pix = context.getResources().getDimensionPixelSize(R.dimen.float_win_height);
+                int width = context.getResources().getDimensionPixelSize(R.dimen.float_win_width);
                 if (metrics.heightPixels < pix) {
                     if (metrics.widthPixels < width) {
                         dialog.getWindow().setLayout(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT);
@@ -548,6 +552,75 @@ public class DialogUtils {
                 }
             }
         });
+    }
+
+    public interface OnDialogResultListener {
+        void onDialogPositive(List<String> data);
+    }
+
+    /**
+     * 为多个字段配置输入框
+     *
+     * @param title
+     * @param data
+     */
+    public static void showMultipleEditDialog(Context context, final OnDialogResultListener listener, String title, List<Pair<String, String>> data) {
+        LayoutInflater inflater =  LayoutInflater.from(ContextUtil.getContextThemeWrapper(
+                context, R.style.AppDialogTheme));
+
+        ScrollView v = (ScrollView) inflater.inflate(R.layout.dialog_setting, null);
+
+        LinearLayout view = (LinearLayout) v.getChildAt(0);
+        final List<EditText> editTexts = new ArrayList<>();
+
+        LinearLayout.LayoutParams layoutParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+
+        // 对每一个字段添加EditText
+        for (Pair<String, String> source : data) {
+            View editField = inflater.inflate(R.layout.item_edit_field, null);
+
+            EditText edit = (EditText) editField.findViewById(R.id.item_edit_field_edit);
+            TextView name = (TextView) editField.findViewById(R.id.item_edit_field_name);
+
+            if (StringUtil.isEmpty(source.first)) {
+                name.setVisibility(View.GONE);
+            } else {
+                // 配置字段
+                name.setText(source.first);
+            }
+            edit.setHint(source.first);
+            edit.setText(source.second);
+
+            view.addView(editField, layoutParams);
+            editTexts.add(edit);
+        }
+
+        // 显示Dialog
+        new AlertDialog.Builder(context, R.style.AppDialogTheme)
+                .setTitle(title)
+                .setView(v)
+                .setPositiveButton(R.string.constant__confirm, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        List<String> result = new ArrayList<>(editTexts.size() + 1);
+
+                        // 获取每个编辑框的文字
+                        for (EditText data : editTexts) {
+                            result.add(data.getText().toString().trim());
+                        }
+
+                        if (listener != null) {
+                            listener.onDialogPositive(result);
+                        }
+                        dialog.dismiss();
+                    }
+                }).setNegativeButton(R.string.constant__cancel, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.dismiss();
+            }
+        }).setCancelable(true)
+                .show();
     }
 
     /**
@@ -593,6 +666,16 @@ public class DialogUtils {
     /**
      * 显示图像Dialog
      * @param context
+     * @param content uri
+     */
+    public static void showImageDialog(Context context, URL content) {
+        ImageDialog dialog = new ImageDialog(context, content);
+        dialog.show();
+    }
+
+    /**
+     * 显示图像Dialog
+     * @param context
      * @param bitmap
      */
     public static void showImageDialog(Context context, Bitmap bitmap) {
@@ -616,6 +699,7 @@ public class DialogUtils {
         private Integer id;
         private String path;
         private Uri uri;
+        private URL url;
         private Bitmap bitmap;
         private byte[] data;
 
@@ -642,6 +726,11 @@ public class DialogUtils {
         public ImageDialog(@NonNull Context context, Uri uri) {
             super(context, R.style.ShadowDialogTheme);
             this.uri = uri;
+        }
+
+        public ImageDialog(@NonNull Context context, URL url) {
+            super(context, R.style.ShadowDialogTheme);
+            this.url = url;
         }
 
         public ImageDialog(@NonNull Context context, byte[] data) {
@@ -697,6 +786,8 @@ public class DialogUtils {
                 request = manager.load(path);
             } else if (uri != null) {
                 request = manager.load(uri);
+            } else if (url != null) {
+                request = manager.load(url);
             } else if (bitmap != null){
                 request = manager.load(bitmap);
             } else if (data != null){

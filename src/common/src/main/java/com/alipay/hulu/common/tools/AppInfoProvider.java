@@ -29,6 +29,7 @@ import com.alipay.hulu.common.injector.provider.Provider;
 import com.alipay.hulu.common.service.SPService;
 import com.alipay.hulu.common.utils.LogUtil;
 import com.alipay.hulu.common.utils.StringUtil;
+import android.os.Build;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -41,6 +42,23 @@ public class AppInfoProvider {
     public static final String MAIN = "main";
 
     private String appName;
+
+    private volatile static AppInfoProvider _PROVIDER_INSTANCE;
+
+    public static AppInfoProvider getInstance() {
+        if (_PROVIDER_INSTANCE == null) {
+            synchronized (AppInfoProvider.class) {
+                if (_PROVIDER_INSTANCE == null) {
+                    _PROVIDER_INSTANCE = new AppInfoProvider();
+                }
+            }
+        }
+
+        return _PROVIDER_INSTANCE;
+    }
+
+    private AppInfoProvider() {
+    }
 
     @Subscriber(@Param(SubscribeParamEnum.APP))
     public void setAppName(String appName) {
@@ -87,8 +105,15 @@ public class AppInfoProvider {
             result.put(SubscribeParamEnum.UID, 0);
         }
 
-        String activity = CmdTools.execAdbCmd("dumpsys activity top | grep \"ACTIVITY " + appName + "\"", 1000);
-        int filterPid = findTopPid(result, activity);
+        int filterPid;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            String activity = CmdTools.execAdbCmd("dumpsys window windows | grep -e \"Window #.*" + appName + "\" -A3", 1000);
+            filterPid = findTopPidAfterQ(result, activity);
+        } else {
+            String activity = CmdTools.execAdbCmd("dumpsys activity top | grep \"ACTIVITY " + appName + "\"", 1000);
+            filterPid = findTopPid(result, activity);
+        }
+
 
         // 查询PID，针对该应用所有进程
         String[] pids = CmdTools.ps(appName);
@@ -104,6 +129,67 @@ public class AppInfoProvider {
         result.put(SubscribeParamEnum.PACKAGE_CHILDREN, childrenPackage);
 
         return result;
+    }
+
+    /**
+     * 通过顶层ACTIVITY查找pid
+     * Android Q 之后
+     * @param result
+     * @param activity
+     * @return
+     */
+    private int findTopPidAfterQ(Map<String, Object> result, String activity) {
+
+        // 当顶层ACTIVITY存在时，以顶层PID过滤
+        String trimmed;
+        if (activity != null && StringUtil.isNotEmpty((trimmed = activity.trim()))) {
+            String[] pidContent = trimmed.split("\\s*\n+\\s*");
+            String targetLine = null;
+            for (String line : pidContent) {
+                if (line.contains("Session{")) {
+                    targetLine = line;
+                    break;
+                }
+            }
+            String[] originActivityName = pidContent[0].split("\\s+");
+            String[] topActivity = originActivityName[originActivityName.length - 1].split("/");
+
+            LogUtil.i(TAG, "Activity:" + Arrays.toString(topActivity));
+            if (topActivity.length > 1) {
+                // 针对Activity是以"."开头的相对定位路径
+                String mActivity = topActivity[1];
+                // 尾缀fix
+                if (mActivity.contains("}")) {
+                    mActivity = mActivity.split("\\}")[0];
+                }
+
+                if (StringUtil.startWith(mActivity, ".")) {
+                    mActivity = topActivity[0] + mActivity;
+                }
+
+                // 拼接会完整名称
+                String activityName = topActivity[0] + "/" + mActivity;
+                result.put(SubscribeParamEnum.TOP_ACTIVITY, activityName);
+
+            }
+
+            if (targetLine != null) {
+                String[] pidStrs = targetLine.split("\\s+");
+                String targetPidInfo = null;
+                for (String pidStr: pidStrs) {
+                    if (pidStr.contains(":")) {
+                        targetPidInfo = pidStr.split("\\:")[0];
+                    }
+                }
+
+                LogUtil.i(TAG, "Get pid info：" + targetPidInfo);
+                return targetPidInfo != null? Integer.parseInt(targetPidInfo): -1;
+            }
+
+            return -1;
+            // 记录过滤PID
+        }
+        return -1;
     }
 
     /**

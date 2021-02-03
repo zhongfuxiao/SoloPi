@@ -23,13 +23,13 @@
     <RelativeLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:padding="16dp">
+        android:padding="@dimen/control_dp16">
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="用例名称: "
+            android:text="@string/case_result__case_name"
             android:id="@+id/case_name"
-            android:textSize="20dp"
+            android:textSize="@dimen/textsize_20"
             android:textColor="@color/primaryText"
             />
         
@@ -37,53 +37,60 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_below="@id/case_name"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="@dimen/control_dp4"
             android:orientation="vertical">
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:id="@+id/target_app"
-                android:textSize="14dp"
+                android:textSize="@dimen/textsize_14"
                 android:textColor="@color/secondaryText"
                 />
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:id="@+id/start_time"
-                android:textSize="14dp"
+                android:textSize="@dimen/textsize_14"
                 android:textColor="@color/secondaryText"
                 />
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:id="@+id/end_time"
-                android:textSize="14dp"
+                android:textSize="@dimen/textsize_14"
                 android:textColor="@color/secondaryText"
                 />
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:id="@+id/case_status"
-                android:textSize="14dp"
+                android:textSize="@dimen/textsize_14"
                 />
 
         </LinearLayout>
 
     </RelativeLayout>
 
-    <android.support.design.widget.TabLayout
+    <com.google.android.material.tabs.TabLayout
         android:id="@+id/tab_layout"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        app:tabMode="scrollable"/>
+        android:layout_height="@dimen/control_dp48"
+        app:tabTextAppearance="@style/TabLayoutTextStyle"
+        app:tabPaddingTop="@dimen/control_dp8"
+        app:tabPaddingBottom="@dimen/control_dp8"
+        app:tabPaddingStart="@dimen/control_dp8"
+        app:tabPaddingEnd="@dimen/control_dp8"
+        app:tabGravity="fill"
+        app:tabMode="fixed"
+        app:tabMaxWidth="0dp"/>
     <View
         android:layout_width="match_parent"
         android:layout_height="1px"
         android:background="#bebebe"/>
-    <android.support.v4.view.ViewPager
+    <androidx.viewpager.widget.ViewPager
         android:id="@+id/pager"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-    </android.support.v4.view.ViewPager>
+    </androidx.viewpager.widget.ViewPager>
 </LinearLayout>

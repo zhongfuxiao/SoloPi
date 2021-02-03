@@ -15,6 +15,8 @@
  */
 package com.alipay.hulu.activity.entry;
 
+import androidx.annotation.StringRes;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -30,14 +32,33 @@ public @interface EntryActivity {
      * 图标
      * @return
      */
-    int icon();
+    int icon() default -1;
+
+    /**
+     * 图标ID名称
+     * @return
+     */
+    String iconName() default "";
 
     /**
      * 显示名称
      *
      * @return
      */
-    String name();
+    String name() default "";
+
+    /**
+     * name string res
+     * @return
+     */
+    @StringRes
+    int nameRes() default 0;
+
+    /**
+     * name string res
+     * @return
+     */
+    String nameResName() default "";
 
     /**
      * 依赖权限

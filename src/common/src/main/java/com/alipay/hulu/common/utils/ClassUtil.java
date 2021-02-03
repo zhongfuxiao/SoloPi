@@ -267,7 +267,12 @@ public class ClassUtil {
             }
         }
 
-        return null;
+        try {
+            return Class.forName(name);
+        } catch (ClassNotFoundException e) {
+            LogUtil.e(TAG, "Fail to load class:" + name, e);
+            return null;
+        }
     }
 
 
@@ -469,6 +474,14 @@ public class ClassUtil {
         }
 
         return mPatchInfo.get(patchName);
+    }
+
+    /**
+     * 获取所有插件
+     * @return
+     */
+    public static List<PatchLoadResult> getAllPatches() {
+        return new ArrayList<>(mPatchInfo.values());
     }
 
     /**

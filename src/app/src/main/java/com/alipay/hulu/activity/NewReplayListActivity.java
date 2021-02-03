@@ -17,19 +17,23 @@ package com.alipay.hulu.activity;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.support.annotation.Nullable;
-import android.support.design.widget.TabLayout;
-import android.support.v4.app.Fragment;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.app.FragmentPagerAdapter;
-import android.support.v4.view.ViewPager;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.alipay.hulu.R;
 import com.alipay.hulu.common.utils.MiscUtil;
 import com.alipay.hulu.fragment.ReplayListFragment;
 import com.alipay.hulu.ui.HeadControlPanel;
+import com.google.android.material.tabs.TabLayout;
+
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
+import androidx.fragment.app.FragmentPagerAdapter;
+import androidx.viewpager.widget.ViewPager;
 
 /**
  * Created by lezhou.wyl on 2018/7/30.
@@ -40,7 +44,6 @@ public class NewReplayListActivity extends BaseActivity {
     private ViewPager mPager;
     private TabLayout mTabLayout;
     private HeadControlPanel mHeadPanel;
-    private TextView rightTitle;
 
 
     @Override
@@ -49,19 +52,48 @@ public class NewReplayListActivity extends BaseActivity {
 
         setContentView(R.layout.activity_new_replay_list);
 
-        mPager = (ViewPager) findViewById(R.id.pager);
-        mTabLayout = (TabLayout) findViewById(R.id.tab_layout);
-        mHeadPanel = (HeadControlPanel) findViewById(R.id.head_replay_list);
-        rightTitle = (TextView) mHeadPanel.findViewById(R.id.right_title);
-        rightTitle.setText(R.string.constant__batch_replay);
+        mPager = findViewById(R.id.pager);
+        mTabLayout = findViewById(R.id.tab_layout);
+        mHeadPanel = findViewById(R.id.head_replay_list);
+
+        // 配置菜单信息
+        LayoutInflater inflater = LayoutInflater.from(this);
+
+        View rightTitle = inflater.inflate(R.layout.item_icon_template, mHeadPanel, false);
+        ImageView icon = rightTitle.findViewById(R.id.item_icon_template_icon);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rightTitle.setLayoutParams(params);
+        TextView title = rightTitle.findViewById(R.id.item_icon_template_title);
+        title.setText(R.string.constant__batch_replay);
+        icon.setImageResource(R.drawable.icon_batch_play);
+        params.setMarginEnd(- getResources().getDimensionPixelSize(R.dimen.control_dp4));
+        params.setMarginStart(getResources().getDimensionPixelSize(R.dimen.control_dp8));
         rightTitle.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                startActivity(new Intent(NewReplayListActivity.this, BatchExecutionActivity.class));
+                NewReplayListActivity.this.startActivity(new Intent(NewReplayListActivity.this, BatchExecutionActivity.class));
             }
         });
+        mHeadPanel.addMenuFromLeft(rightTitle);
 
-        mHeadPanel.setMiddleTitle(getString(R.string.constant__case_list));
+        rightTitle = inflater.inflate(R.layout.item_icon_template, mHeadPanel, false);
+        icon = rightTitle.findViewById(R.id.item_icon_template_icon);
+        params = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rightTitle.setLayoutParams(params);
+        title = rightTitle.findViewById(R.id.item_icon_template_title);
+        title.setText(R.string.replay_icon__history);
+        icon.setImageResource(R.drawable.icon_replay_history);
+        params.setMarginStart(getResources().getDimensionPixelSize(R.dimen.control_dp8));
+        rightTitle.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                NewReplayListActivity.this.startActivity(new Intent(NewReplayListActivity.this, LocalReplayResultActivity.class));
+            }
+        });
+        mHeadPanel.addMenuFromLeft(rightTitle);
+
+        mHeadPanel.setMiddleTitle(getString(R.string.activity__case_list));
+        mHeadPanel.setTitlePosition(HeadControlPanel.POSITION_LEFT);
         mHeadPanel.setBackIconClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -82,6 +114,7 @@ public class NewReplayListActivity extends BaseActivity {
 
         ReplayPagerAdapter pagerAdapter = new ReplayPagerAdapter(getSupportFragmentManager());
         mPager.setAdapter(pagerAdapter);
+        mPager.setOffscreenPageLimit(2);
 
     }
 

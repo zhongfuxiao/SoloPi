@@ -17,14 +17,14 @@ apply plugin: 'com.android.library'
 apply plugin: 'org.greenrobot.greendao'
 
 android {
-    compileSdkVersion 25
-    buildToolsVersion "26.0.2"
+    compileSdkVersion rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
 
     publishNonDefault true
 
     defaultConfig {
         minSdkVersion 18
-        targetSdkVersion 25
+        targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
         ndk {
@@ -51,13 +51,13 @@ greendao{
 }
 
 dependencies {
-    compileOnly 'com.alibaba:fastjson:1.1.71.android'
-    compileOnly 'com.android.support:appcompat-v7:25.4.0'
-    compileOnly 'com.android.support:support-v4:25.4.0'
-    compileOnly 'com.liulishuo.filedownloader:library:1.7.6'
+    compileOnly "com.google.zxing:core:3.4.0"
+    compileOnly 'com.alibaba:fastjson:1.2.73'
+    compileOnly 'androidx.appcompat:appcompat:1.0.0'
+    compileOnly 'androidx.legacy:legacy-support-v4:1.0.0'
+    compileOnly 'com.liulishuo.filedownloader:library:1.7.7'
     compileOnly 'com.squareup.okhttp3:okhttp:3.12.3'
-    compileOnly 'org.greenrobot:greendao:3.2.2'
-    compileOnly 'org.greenrobot:eventbus:3.1.1'
+    compileOnly 'org.greenrobot:greendao:3.3.0'
 
     compileOnly group: 'commons-io', name: 'commons-io', version: '2.6'
     api project(':common')

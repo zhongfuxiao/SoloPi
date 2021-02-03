@@ -16,13 +16,13 @@
 apply plugin: 'com.android.library'
 
 android {
-    compileSdkVersion 25
-    buildToolsVersion "26.0.2"
+    compileSdkVersion rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
 
 
     defaultConfig {
         minSdkVersion 18
-        targetSdkVersion 25
+        targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
 
@@ -35,21 +35,21 @@ android {
 }
 
 dependencies {
-    compileOnly 'com.android.support:appcompat-v7:25.4.0'
-    compileOnly 'com.android.support:support-v4:25.4.0'
-    compileOnly 'com.android.support:design:25.4.0'
+    compileOnly 'androidx.appcompat:appcompat:1.0.0'
+    compileOnly 'androidx.legacy:legacy-support-v4:1.0.0'
+    compileOnly 'com.google.android.material:material:1.0.0'
     compileOnly ('com.orhanobut:logger:2.2.0') {
         exclude group: "com.android.support"
     }
     compileOnly 'com.squareup.okhttp3:okhttp:3.12.3'
-    compileOnly('com.github.bumptech.glide:glide:4.9.0')
+    compileOnly('com.github.bumptech.glide:glide:4.11.0')
     {
         exclude group: "com.android.support"
     }
-    compileOnly 'com.alibaba:fastjson:1.1.71.android'
+    compileOnly 'com.alibaba:fastjson:1.2.73'
     compileOnly group: 'commons-io', name: 'commons-io', version: '2.6'
-    compileOnly 'com.android.support:multidex:1.0.3'
-    annotationProcessor ('com.github.bumptech.glide:compiler:4.9.0')
+    compileOnly 'androidx.multidex:multidex:2.0.0'
+    annotationProcessor ('com.github.bumptech.glide:compiler:4.11.0')
     {
         exclude group: "com.android.support"
     }

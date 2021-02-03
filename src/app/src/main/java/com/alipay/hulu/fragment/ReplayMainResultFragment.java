@@ -17,10 +17,10 @@ package com.alipay.hulu.fragment;
 
 
 import android.os.Bundle;
-import android.support.annotation.Nullable;
-import android.support.v4.app.Fragment;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -29,6 +29,7 @@ import android.widget.TextView;
 
 import com.alipay.hulu.R;
 import com.alipay.hulu.bean.ReplayResultBean;
+import com.alipay.hulu.common.bean.DeviceInfo;
 import com.alipay.hulu.common.utils.DeviceInfoUtil;
 import com.alipay.hulu.common.utils.StringUtil;
 import com.alipay.hulu.shared.node.tree.export.bean.OperationStep;
@@ -77,12 +78,16 @@ public class ReplayMainResultFragment extends Fragment {
 
         contents = new ArrayList<>();
 
-        contents.add(new Pair<>("设备信息", DeviceInfoUtil.generateDeviceInfo().toString()));
+        DeviceInfo deviceInfo = resultBean.getDeviceInfo();
+        if (deviceInfo == null) {
+            deviceInfo = DeviceInfoUtil.generateDeviceInfo();
+        }
+        contents.add(new Pair<>(getString(R.string.ui__device_info), deviceInfo.toString()));
 
         List<OperationStep> operations = resultBean.getCurrentOperationLog();
 
         // 拼接流程信息
-        StringBuilder operationString = new StringBuilder("总步骤数:").append(operations.size()).append("\n\n");
+        StringBuilder operationString = new StringBuilder(getString(R.string.ui__total_steps)).append(operations.size()).append("\n\n");
         for (int i = 0; i < operations.size(); i++) {
             OperationStep currentOperation = operations.get(i);
             operationString.append(i + 1).append(" ").append(currentOperation.getOperationMethod().getActionEnum().getDesc());
@@ -105,13 +110,13 @@ public class ReplayMainResultFragment extends Fragment {
             operationString.append("\n");
         }
 
-        contents.add(new Pair<>("用例流程", operationString.toString()));
+        contents.add(new Pair<>(getString(R.string.ui__case_steps), operationString.toString()));
 
         // 如果回访失败，显示故障相关信息
         if (!StringUtil.isEmpty(resultBean.getExceptionMessage())) {
-            contents.add(new Pair<>("故障步骤", Integer.toString(resultBean.getExceptionStep() + 1)));
+            contents.add(new Pair<>(getString(R.string.ui__error_step), Integer.toString(resultBean.getExceptionStep() + 1)));
 
-            contents.add(new Pair<>("故障原因", resultBean.getExceptionMessage()));
+            contents.add(new Pair<>(getString(R.string.ui__error_reason), resultBean.getExceptionMessage()));
         }
     }
 

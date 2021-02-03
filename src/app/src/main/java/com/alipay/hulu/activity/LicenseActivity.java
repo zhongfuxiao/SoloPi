@@ -16,7 +16,7 @@
 package com.alipay.hulu.activity;
 
 import android.os.Bundle;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.view.View;
 import android.webkit.WebView;
 
@@ -43,7 +43,7 @@ public class LicenseActivity extends BaseActivity {
                 finish();
             }
         });
-        panel.setMiddleTitle("开源许可");
+        panel.setMiddleTitle(getString(R.string.activity__license));
 
         final WebView licenseText = (WebView) findViewById(R.id.license_text);
         licenseText.loadUrl(NOTICE_HTML);
